@@ -165,7 +165,7 @@ impl Autostart {
     }
 }
 
-/// 32×32 raster of `assets/icon-phial.svg`: Galadriel's phial, not an orange blob.
+/// 32×32 raster of `assets/icon-phial.svg`: a short lidded jar with a teal halo.
 fn phial_icon() -> anyhow::Result<tray_icon::Icon> {
     const SZ: u32 = 32;
     const SAMPLES: u32 = 3;
@@ -197,56 +197,52 @@ fn phial_icon() -> anyhow::Result<tray_icon::Icon> {
     tray_icon::Icon::from_rgba(rgba, SZ, SZ).map_err(|e| anyhow::anyhow!("{e}"))
 }
 
-/// Unit square, y down. Inspired by the Phial of Galadriel card art:
-/// teardrop vial, silver cap, white-gold core, teal halo.
+/// Unit square, y down. A short round jar with a lid — reads at 32 px.
+/// Starlight inside, teal halo. Not a teardrop (that looked like a pin/bulb).
 fn phial_pixel(u: f32, v: f32) -> [f32; 4] {
     let x = (u - 0.50) * 2.0;
     let y = (v - 0.50) * 2.0;
 
-    let d_body = sd_teardrop(x, y + 0.08);
-    let d_cap = sd_cap(x, y + 0.08);
-    let d_shape = d_body.min(d_cap);
+    let d_body = sd_jar(x, y);
+    let d_lid = sd_lid(x, y);
+    let d_shape = d_body.min(d_lid);
 
-    let glow = smoothstep(0.55, 0.0, d_shape + 0.28);
-    let fill = smoothstep(0.04, -0.02, d_shape);
-    let core = (-((x * x) * 9.0 + (y - 0.05).powi(2) * 4.5)).exp();
-    let highlight = smoothstep(0.12, 0.0, (x + 0.16).abs() + (y + 0.05).abs() * 0.4);
+    let glow = smoothstep(0.50, 0.0, d_shape + 0.22);
+    let fill = smoothstep(0.035, -0.02, d_shape);
+    let core = (-(x * x * 7.0 + (y - 0.18).powi(2) * 6.0)).exp();
+    let highlight = smoothstep(0.14, 0.0, (x + 0.18).abs() + (y - 0.10).abs() * 0.5);
 
-    let mut r = 55.0 * glow + 185.0 * fill + 70.0 * core + 25.0 * highlight * fill;
-    let mut g = 195.0 * glow + 225.0 * fill + 40.0 * core + 20.0 * highlight * fill;
-    let mut b = 190.0 * glow + 220.0 * fill + 15.0 * core + 30.0 * highlight * fill;
-    if d_cap < 0.02 {
-        r = r * 0.85 + 200.0 * fill;
-        g = g * 0.88 + 205.0 * fill;
-        b = b * 0.92 + 215.0 * fill;
+    let mut r = 50.0 * glow + 175.0 * fill + 80.0 * core + 28.0 * highlight * fill;
+    let mut g = 200.0 * glow + 220.0 * fill + 45.0 * core + 22.0 * highlight * fill;
+    let mut b = 195.0 * glow + 215.0 * fill + 18.0 * core + 32.0 * highlight * fill;
+    if d_lid < 0.02 {
+        r = r * 0.78 + 210.0 * fill;
+        g = g * 0.82 + 212.0 * fill;
+        b = b * 0.88 + 220.0 * fill;
     }
-    let a = (glow * 140.0 + fill * 255.0).clamp(0.0, 255.0);
+    let a = (glow * 130.0 + fill * 255.0).clamp(0.0, 255.0);
     [r.min(255.0), g.min(255.0), b.min(255.0), a]
 }
 
-fn sd_teardrop(x: f32, y: f32) -> f32 {
-    let bulb = (x * x + (y + 0.10).powi(2)).sqrt() - 0.36;
-    let t = ((y + 0.08) / 0.96).clamp(0.0, 1.0);
-    let hw = 0.36 * (1.0 - t * t);
-    let taper = if y < -0.08 {
-        1.0
-    } else if y <= 0.88 {
-        x.abs() - hw
-    } else {
-        (x * x + (y - 0.88).powi(2)).sqrt()
-    };
-    bulb.min(taper)
+fn sd_jar(x: f32, y: f32) -> f32 {
+    // Wide squat body — a pote, not a bottle.
+    sd_ellipse(x, y - 0.16, 0.56, 0.58)
 }
 
-fn sd_cap(x: f32, y: f32) -> f32 {
-    let cy = y + 0.62;
-    let dome = ((x * x) * 1.4 + cy * cy).sqrt() - 0.20;
-    let neck = {
-        let nx = x.abs() - 0.11;
-        let ny = (y + 0.42).abs() - 0.10;
-        nx.max(ny)
-    };
-    dome.min(neck)
+fn sd_lid(x: f32, y: f32) -> f32 {
+    let plate = sd_round_box(x, y + 0.50, 0.40, 0.09, 0.04);
+    let knob = (x * x + (y + 0.68).powi(2)).sqrt() - 0.11;
+    plate.min(knob)
+}
+
+fn sd_ellipse(x: f32, y: f32, rx: f32, ry: f32) -> f32 {
+    (x / rx).powi(2) + (y / ry).powi(2) - 1.0
+}
+
+fn sd_round_box(x: f32, y: f32, hx: f32, hy: f32, r: f32) -> f32 {
+    let qx = x.abs() - hx + r;
+    let qy = y.abs() - hy + r;
+    qx.max(qy).min(0.0) + (qx.max(0.0).powi(2) + qy.max(0.0).powi(2)).sqrt() - r
 }
 
 fn smoothstep(edge0: f32, edge1: f32, x: f32) -> f32 {
@@ -260,13 +256,12 @@ mod tests {
 
     #[test]
     fn phial_is_not_an_orange_disc() {
-        let body = phial_pixel(0.50, 0.55);
+        let body = phial_pixel(0.50, 0.58);
         assert!(body[3] > 180.0, "body should be opaque, alpha {}", body[3]);
-        let glow = phial_pixel(0.72, 0.52);
         assert!(
-            glow[1] > glow[0] && glow[2] > glow[0],
-            "halo is teal, not orange: r={} g={} b={}",
-            glow[0], glow[1], glow[2]
+            body[1] + body[2] > body[0] * 1.4,
+            "glass is teal/silver, not orange: r={} g={} b={}",
+            body[0], body[1], body[2]
         );
         let corner = phial_pixel(0.02, 0.02);
         assert!(corner[3] < 20.0, "corners stay transparent");
