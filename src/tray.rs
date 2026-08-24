@@ -32,7 +32,7 @@ impl Tray {
         intensity: Intensity,
         noise_enabled: bool,
     ) -> anyhow::Result<Self> {
-        let icon = amber_icon()?;
+        let icon = phial_icon()?;
 
         let intensity_alta = CheckMenuItem::new("Alta", true, intensity == Intensity::Alta, None);
         let intensity_media = CheckMenuItem::new("Média", true, intensity == Intensity::Media, None);
@@ -165,21 +165,110 @@ impl Autostart {
     }
 }
 
-fn amber_icon() -> anyhow::Result<tray_icon::Icon> {
+/// 32×32 raster of `assets/icon-phial.svg`: Galadriel's phial, not an orange blob.
+fn phial_icon() -> anyhow::Result<tray_icon::Icon> {
     const SZ: u32 = 32;
+    const SAMPLES: u32 = 3;
     let mut rgba = vec![0u8; (SZ * SZ * 4) as usize];
-    let c = SZ as f32 / 2.0;
     for y in 0..SZ {
         for x in 0..SZ {
-            let dx = x as f32 - c;
-            let dy = y as f32 - c;
-            if (dx * dx + dy * dy).sqrt() < c - 1.0 {
-                let i = ((y * SZ + x) * 4) as usize;
-                rgba[i] = 255;
-                rgba[i + 1] = 140;
-                rgba[i + 3] = 255;
+            let mut acc = [0.0_f32; 4];
+            for sy in 0..SAMPLES {
+                for sx in 0..SAMPLES {
+                    let u = (x as f32 + (sx as f32 + 0.5) / SAMPLES as f32) / SZ as f32;
+                    let v = (y as f32 + (sy as f32 + 0.5) / SAMPLES as f32) / SZ as f32;
+                    let p = phial_pixel(u, v);
+                    acc[0] += p[0];
+                    acc[1] += p[1];
+                    acc[2] += p[2];
+                    acc[3] += p[3];
+                }
             }
+            let n = (SAMPLES * SAMPLES) as f32;
+            let i = ((y * SZ + x) * 4) as usize;
+            let a = (acc[3] / n).clamp(0.0, 255.0);
+            // Premultiplied-looking RGB: keep color even when a < 255.
+            rgba[i] = (acc[0] / n).clamp(0.0, 255.0) as u8;
+            rgba[i + 1] = (acc[1] / n).clamp(0.0, 255.0) as u8;
+            rgba[i + 2] = (acc[2] / n).clamp(0.0, 255.0) as u8;
+            rgba[i + 3] = a as u8;
         }
     }
     tray_icon::Icon::from_rgba(rgba, SZ, SZ).map_err(|e| anyhow::anyhow!("{e}"))
+}
+
+/// Unit square, y down. Inspired by the Phial of Galadriel card art:
+/// teardrop vial, silver cap, white-gold core, teal halo.
+fn phial_pixel(u: f32, v: f32) -> [f32; 4] {
+    let x = (u - 0.50) * 2.0;
+    let y = (v - 0.50) * 2.0;
+
+    let d_body = sd_teardrop(x, y + 0.08);
+    let d_cap = sd_cap(x, y + 0.08);
+    let d_shape = d_body.min(d_cap);
+
+    let glow = smoothstep(0.55, 0.0, d_shape + 0.28);
+    let fill = smoothstep(0.04, -0.02, d_shape);
+    let core = (-((x * x) * 9.0 + (y - 0.05).powi(2) * 4.5)).exp();
+    let highlight = smoothstep(0.12, 0.0, (x + 0.16).abs() + (y + 0.05).abs() * 0.4);
+
+    let mut r = 55.0 * glow + 185.0 * fill + 70.0 * core + 25.0 * highlight * fill;
+    let mut g = 195.0 * glow + 225.0 * fill + 40.0 * core + 20.0 * highlight * fill;
+    let mut b = 190.0 * glow + 220.0 * fill + 15.0 * core + 30.0 * highlight * fill;
+    if d_cap < 0.02 {
+        r = r * 0.85 + 200.0 * fill;
+        g = g * 0.88 + 205.0 * fill;
+        b = b * 0.92 + 215.0 * fill;
+    }
+    let a = (glow * 140.0 + fill * 255.0).clamp(0.0, 255.0);
+    [r.min(255.0), g.min(255.0), b.min(255.0), a]
+}
+
+fn sd_teardrop(x: f32, y: f32) -> f32 {
+    let bulb = (x * x + (y + 0.10).powi(2)).sqrt() - 0.36;
+    let t = ((y + 0.08) / 0.96).clamp(0.0, 1.0);
+    let hw = 0.36 * (1.0 - t * t);
+    let taper = if y < -0.08 {
+        1.0
+    } else if y <= 0.88 {
+        x.abs() - hw
+    } else {
+        (x * x + (y - 0.88).powi(2)).sqrt()
+    };
+    bulb.min(taper)
+}
+
+fn sd_cap(x: f32, y: f32) -> f32 {
+    let cy = y + 0.62;
+    let dome = ((x * x) * 1.4 + cy * cy).sqrt() - 0.20;
+    let neck = {
+        let nx = x.abs() - 0.11;
+        let ny = (y + 0.42).abs() - 0.10;
+        nx.max(ny)
+    };
+    dome.min(neck)
+}
+
+fn smoothstep(edge0: f32, edge1: f32, x: f32) -> f32 {
+    let t = ((x - edge0) / (edge1 - edge0)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn phial_is_not_an_orange_disc() {
+        let body = phial_pixel(0.50, 0.55);
+        assert!(body[3] > 180.0, "body should be opaque, alpha {}", body[3]);
+        let glow = phial_pixel(0.72, 0.52);
+        assert!(
+            glow[1] > glow[0] && glow[2] > glow[0],
+            "halo is teal, not orange: r={} g={} b={}",
+            glow[0], glow[1], glow[2]
+        );
+        let corner = phial_pixel(0.02, 0.02);
+        assert!(corner[3] < 20.0, "corners stay transparent");
+    }
 }
