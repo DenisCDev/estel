@@ -5,7 +5,7 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
     mpsc,
 };
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use chrono::{Local, NaiveDate, Timelike};
 use windows::Win32::Foundation::{ERROR_ALREADY_EXISTS, GetLastError};
@@ -19,6 +19,7 @@ use estel::display;
 use estel::overlay;
 use estel::schedule::DayContext;
 use estel::session;
+use estel::target::{NoiseColor, Target};
 use estel::tray::{Autostart, Tray, TrayAction};
 
 fn main() -> anyhow::Result<()> {
@@ -88,6 +89,7 @@ fn main() -> anyhow::Result<()> {
     }
 
     let mut paused = false;
+    let mut preview_until: Option<Instant> = None;
 
     while running.load(Ordering::SeqCst) {
         while let Ok(incoming) = cfg_rx.try_recv() {
@@ -109,10 +111,25 @@ fn main() -> anyhow::Result<()> {
         };
 
         let scheduled = cfg.schedule.target_at(now_min, &ctx);
-        let target = scheduled.attenuate(cfg.intensity.factor());
+        let mut target = scheduled.attenuate(cfg.intensity.factor());
+        let preview = preview_until.is_some_and(|t| Instant::now() < t);
+        if preview_until.is_some_and(|t| Instant::now() >= t) {
+            preview_until = None;
+            tracing::info!("prévia encerrada");
+        }
+        if preview {
+            target = Target {
+                cct_kelvin: 2400.0,
+                brightness: 0.28,
+                noise_gain: 1.0,
+                noise: Some(NoiseColor::Pink),
+            };
+        }
 
-        if paused {
+        if paused && !preview {
             tray.set_tooltip("Estel · pausada");
+        } else if preview {
+            tray.set_tooltip("Estel · prévia noturna");
         } else {
             tray.set_tooltip(&format!(
                 "Estel · {} K · {}",
@@ -121,7 +138,15 @@ fn main() -> anyhow::Result<()> {
             ));
         }
 
-        if paused {
+        tracing::info!(
+            cct = target.cct_kelvin as u32,
+            brilho_pct = (target.brightness * 100.0) as u32,
+            ruido = ?target.noise,
+            preview,
+            "tick"
+        );
+
+        if paused && !preview {
             // parked at the moment of pause
         } else if cfg.display_enabled {
             match display::apply(&target, cfg.gamma_warm_floor_k, cfg.min_brightness) {
@@ -141,7 +166,9 @@ fn main() -> anyhow::Result<()> {
         }
 
         if let Some(ref mut aud) = audio {
-            if paused || !cfg.noise_enabled {
+            if preview {
+                aud.tick(target.noise, 1.0, 0.55);
+            } else if paused || !cfg.noise_enabled {
                 aud.tick(None, 0.0, cfg.max_volume);
             } else {
                 aud.tick(target.noise, target.noise_gain, cfg.max_volume);
@@ -154,7 +181,7 @@ fn main() -> anyhow::Result<()> {
         let mut kick = false;
 
         while elapsed < tick && running.load(Ordering::SeqCst) && !kick {
-            overlay::pump_messages(overlay_hwnd);
+            overlay::pump_messages();
 
             if let Some(action) = tray.poll() {
                 match action {
@@ -190,6 +217,11 @@ fn main() -> anyhow::Result<()> {
                         persist(&cfg);
                         kick = true;
                     }
+                    TrayAction::PreviewNight => {
+                        preview_until = Some(Instant::now() + Duration::from_secs(20));
+                        tracing::info!("prévia noturna — 20 s de tela quente e ruído");
+                        kick = true;
+                    }
                     TrayAction::OpenSettings => {
                         open_settings(cfg.clone(), cfg_tx.clone(), settings_open.clone());
                     }
@@ -211,7 +243,9 @@ fn main() -> anyhow::Result<()> {
             }
 
             if let Some(ref mut aud) = audio {
-                if paused || !cfg.noise_enabled {
+                if preview {
+                    aud.tick(target.noise, 1.0, 0.55);
+                } else if paused || !cfg.noise_enabled {
                     aud.tick(None, 0.0, cfg.max_volume);
                 } else {
                     aud.tick(target.noise, target.noise_gain, cfg.max_volume);
@@ -230,8 +264,9 @@ fn main() -> anyhow::Result<()> {
 }
 
 fn persist(cfg: &Config) {
-    if let Err(e) = cfg.save(&Config::config_path()) {
-        tracing::error!("não foi possível salvar a configuração: {e}");
+    match cfg.save(&Config::config_path()) {
+        Ok(()) => tracing::info!("configuração salva"),
+        Err(e) => tracing::error!("não foi possível salvar a configuração: {e}"),
     }
 }
 
@@ -240,6 +275,12 @@ fn open_settings(cfg: Config, tx: mpsc::Sender<Config>, flag: Arc<AtomicBool>) {
         return;
     }
     std::thread::spawn(move || {
+        unsafe {
+            let _ = windows::Win32::System::Com::CoInitializeEx(
+                None,
+                windows::Win32::System::Com::COINIT_APARTMENTTHREADED,
+            );
+        }
         if let Err(e) = estel::ui::run(cfg, tx) {
             tracing::error!("janela de configurações: {e}");
         }

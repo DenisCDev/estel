@@ -104,13 +104,14 @@ impl Default for Config {
 fn default_schedule() -> Schedule {
     Schedule {
         keypoints: vec![
-            Keypoint { anchor: Anchor::BedOffset(120),  cct_kelvin: 1900.0, brightness: 0.0,  noise_gain: 0.10, noise: Some(NoiseColor::Brown) },
-            Keypoint { anchor: Anchor::WakeOffset(0),   cct_kelvin: 3400.0, brightness: 0.45, noise_gain: 0.70, noise: None },
-            Keypoint { anchor: Anchor::WakeOffset(120), cct_kelvin: 6500.0, brightness: 0.90, noise_gain: 0.90, noise: None },
-            Keypoint { anchor: Anchor::BedOffset(-300), cct_kelvin: 6500.0, brightness: 0.85, noise_gain: 0.85, noise: None },
-            Keypoint { anchor: Anchor::BedOffset(-180), cct_kelvin: 3400.0, brightness: 0.55, noise_gain: 0.50, noise: None },
-            Keypoint { anchor: Anchor::BedOffset(-60),  cct_kelvin: 2700.0, brightness: 0.35, noise_gain: 0.25, noise: Some(NoiseColor::Pink) },
-            Keypoint { anchor: Anchor::BedOffset(0),    cct_kelvin: 2300.0, brightness: 0.18, noise_gain: 0.15, noise: Some(NoiseColor::Pink) },
+            Keypoint { anchor: Anchor::BedOffset(120),   cct_kelvin: 1900.0, brightness: 0.0,  noise_gain: 0.55, noise: Some(NoiseColor::Brown) },
+            Keypoint { anchor: Anchor::WakeOffset(0),    cct_kelvin: 3400.0, brightness: 0.50, noise_gain: 0.0,  noise: None },
+            Keypoint { anchor: Anchor::WakeOffset(90),   cct_kelvin: 6500.0, brightness: 0.90, noise_gain: 0.0,  noise: None },
+            Keypoint { anchor: Anchor::SunsetOffset(-15), cct_kelvin: 6500.0, brightness: 0.85, noise_gain: 0.0,  noise: None },
+            Keypoint { anchor: Anchor::SunsetOffset(45),  cct_kelvin: 3800.0, brightness: 0.55, noise_gain: 0.45, noise: Some(NoiseColor::Pink) },
+            Keypoint { anchor: Anchor::SunsetOffset(120), cct_kelvin: 2800.0, brightness: 0.38, noise_gain: 0.70, noise: Some(NoiseColor::Pink) },
+            Keypoint { anchor: Anchor::BedOffset(-30),   cct_kelvin: 2300.0, brightness: 0.22, noise_gain: 0.80, noise: Some(NoiseColor::Brown) },
+            Keypoint { anchor: Anchor::BedOffset(0),     cct_kelvin: 2100.0, brightness: 0.16, noise_gain: 0.55, noise: Some(NoiseColor::Brown) },
         ],
     }
 }
@@ -136,6 +137,13 @@ impl Config {
             Ok(text) => match toml::from_str::<Config>(&text) {
                 Ok(mut cfg) => {
                     cfg.sanitize();
+                    if cfg.migrate_schedule_to_sunset() {
+                        if let Err(e) = cfg.save(&path) {
+                            tracing::warn!("não foi possível gravar a curva nova: {e}");
+                        } else {
+                            tracing::info!("curva atualizada: a noite agora segue o pôr do sol");
+                        }
+                    }
                     cfg
                 }
                 Err(e) => {
@@ -174,6 +182,20 @@ impl Config {
             k.brightness = k.brightness.clamp(0.0, 1.0);
             k.noise_gain = k.noise_gain.clamp(0.0, 1.0);
         }
+    }
+
+    /// Old configs only anchored on wake/bed, so evening waited until 5 h
+    /// before bedtime (20:00 if you sleep at 01:00). Sunset keypoints make
+    /// the warm + noise start when the sun actually goes down.
+    fn migrate_schedule_to_sunset(&mut self) -> bool {
+        let has_solar = self.schedule.keypoints.iter().any(|k| {
+            matches!(k.anchor, crate::schedule::Anchor::SunsetOffset(_) | crate::schedule::Anchor::SunriseOffset(_))
+        });
+        if has_solar {
+            return false;
+        }
+        self.schedule = default_schedule();
+        true
     }
 
     /// Persist to `path`, creating parent directories as needed.

@@ -39,18 +39,28 @@ pub fn mark_clean() {
     let _ = std::fs::remove_file(dirty_path());
 }
 
-pub fn load_ddc_original() -> Option<u32> {
+pub fn load_ddc_originals() -> Vec<u32> {
     std::fs::read_to_string(ddc_path())
         .ok()
-        .and_then(|s| s.trim().parse().ok())
+        .map(|s| {
+            s.split(|c: char| c == ',' || c.is_whitespace())
+                .filter_map(|p| p.parse().ok())
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
-pub fn save_ddc_original(value: u32) {
+pub fn save_ddc_originals(values: &[u32]) {
     let path = ddc_path();
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
-    let _ = std::fs::write(&path, value.to_string());
+    let text = values
+        .iter()
+        .map(|v| v.to_string())
+        .collect::<Vec<_>>()
+        .join(",");
+    let _ = std::fs::write(&path, text);
 }
 
 pub fn clear_ddc_original() {

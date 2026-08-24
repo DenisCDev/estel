@@ -4,8 +4,9 @@
 //! - warmth below the ~3400 K gamma floor (Win11 clamp)
 //! - dimming when DDC is unavailable (laptop panels)
 //!
-//! PeekMessage is filtered to this HWND so we never steal another window's
-//! queue (tray / settings).
+//! The main thread pumps every message so the tray window stays alive.
+//! Overlay WM_DESTROY must not PostQuitMessage — that killed the process
+//! (and the tray icon) the moment Windows recycled the toolwindow.
 
 use windows::Win32::Foundation::{COLORREF, HINSTANCE, HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::Graphics::Gdi::{
@@ -14,11 +15,12 @@ use windows::Win32::Graphics::Gdi::{
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DispatchMessageW, GetSystemMetrics, PeekMessageW,
-    PostQuitMessage, RegisterClassExW, SetLayeredWindowAttributes, SetWindowPos, ShowWindow,
+    RegisterClassExW, SetLayeredWindowAttributes, SetWindowPos, ShowWindow,
     TranslateMessage, HWND_TOPMOST, SWP_NOACTIVATE, HCURSOR, HICON, MSG, WNDCLASSEXW, LWA_ALPHA,
-    PM_REMOVE, SM_CXSCREEN, SM_CYSCREEN, SW_HIDE, SW_SHOWNOACTIVATE, WM_DESTROY,
-    WM_DISPLAYCHANGE, WM_PAINT, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
-    WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP, WNDCLASS_STYLES,
+    PM_REMOVE, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN,
+    SW_HIDE, SW_SHOWNOACTIVATE, WM_DESTROY, WM_QUIT, WM_DISPLAYCHANGE, WM_PAINT,
+    WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT,
+    WS_POPUP, WNDCLASS_STYLES,
 };
 use windows::core::{PCWSTR, w};
 
@@ -33,39 +35,38 @@ unsafe extern "system" fn wnd_proc(
             WM_PAINT => {
                 let mut ps = PAINTSTRUCT::default();
                 let hdc = BeginPaint(hwnd, &mut ps);
-                // Warm desaturated amber: R=255 G=120 B=40 → COLORREF 0x00BBGGRR
-                let brush: HBRUSH = CreateSolidBrush(COLORREF(0x00_28_78_FF));
+                // Pale peach, not saturated orange. COLORREF is 0x00BBGGRR.
+                let brush: HBRUSH = CreateSolidBrush(COLORREF(0x00_B4_D2_FF));
                 FillRect(hdc, &ps.rcPaint, brush);
                 let _ = DeleteObject(HGDIOBJ(brush.0));
                 let _ = EndPaint(hwnd, &ps);
                 LRESULT(0)
             }
             WM_DISPLAYCHANGE => {
-                resize_to_primary(hwnd);
+                resize_to_virtual(hwnd);
                 LRESULT(0)
             }
-            WM_DESTROY => {
-                PostQuitMessage(0);
-                LRESULT(0)
-            }
+            WM_DESTROY => LRESULT(0),
             _ => DefWindowProcW(hwnd, msg, wp, lp),
         }
     }
 }
 
-fn resize_to_primary(hwnd: HWND) {
+fn virtual_rect() -> (i32, i32, i32, i32) {
     unsafe {
-        let sw = GetSystemMetrics(SM_CXSCREEN);
-        let sh = GetSystemMetrics(SM_CYSCREEN);
-        let _ = SetWindowPos(
-            hwnd,
-            Some(HWND_TOPMOST),
-            0,
-            0,
-            sw,
-            sh,
-            SWP_NOACTIVATE,
-        );
+        (
+            GetSystemMetrics(SM_XVIRTUALSCREEN),
+            GetSystemMetrics(SM_YVIRTUALSCREEN),
+            GetSystemMetrics(SM_CXVIRTUALSCREEN),
+            GetSystemMetrics(SM_CYVIRTUALSCREEN),
+        )
+    }
+}
+
+fn resize_to_virtual(hwnd: HWND) {
+    let (x, y, w, h) = virtual_rect();
+    unsafe {
+        let _ = SetWindowPos(hwnd, Some(HWND_TOPMOST), x, y, w, h, SWP_NOACTIVATE);
     }
 }
 
@@ -93,8 +94,7 @@ pub fn create() -> anyhow::Result<HWND> {
         };
         let _ = RegisterClassExW(&wc);
 
-        let sw = GetSystemMetrics(SM_CXSCREEN);
-        let sh = GetSystemMetrics(SM_CYSCREEN);
+        let (x, y, w, h) = virtual_rect();
 
         let hwnd = CreateWindowExW(
             WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOPMOST
@@ -102,7 +102,7 @@ pub fn create() -> anyhow::Result<HWND> {
             class_name,
             PCWSTR::null(),
             WS_POPUP,
-            0, 0, sw, sh,
+            x, y, w, h,
             None,
             None,
             Some(hinstance),
@@ -137,11 +137,15 @@ pub fn hide(hwnd: HWND) {
     }
 }
 
-/// Drain messages for *this* overlay only.
-pub fn pump_messages(hwnd: HWND) {
+/// Drain the thread queue: overlay + tray. Skip WM_QUIT so a destroyed
+/// overlay cannot tear down the whole app.
+pub fn pump_messages() {
     unsafe {
         let mut msg = MSG::default();
-        while PeekMessageW(&mut msg, Some(hwnd), 0, 0, PM_REMOVE).as_bool() {
+        while PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE).as_bool() {
+            if msg.message == WM_QUIT {
+                continue;
+            }
             let _ = TranslateMessage(&msg);
             DispatchMessageW(&msg);
         }
@@ -152,11 +156,11 @@ pub fn pump_messages(hwnd: HWND) {
 /// DDC is not already doing that job. Capped so the wash stays a comfort
 /// layer, not a blackout.
 pub fn overlay_alpha(cct: f32, brightness: f32, ddc_active: bool) -> u8 {
-    const MAX_WARM: f32 = 70.0;
-    const MAX_DIM: f32 = 90.0;
-    const START_K: f32 = 5500.0;
-    const FLOOR_K: f32 = 1900.0;
-    const MAX_TOTAL: f32 = 140.0;
+    const MAX_WARM: f32 = 38.0;
+    const MAX_DIM: f32 = 70.0;
+    const START_K: f32 = 4800.0;
+    const FLOOR_K: f32 = 2300.0;
+    const MAX_TOTAL: f32 = 80.0;
 
     let warm = if cct >= START_K {
         0.0
@@ -185,6 +189,17 @@ mod tests {
     fn day_is_invisible() {
         assert_eq!(overlay_alpha(6500.0, 0.9, false), 0);
         assert_eq!(overlay_alpha(6500.0, 1.0, true), 0);
+        assert!(
+            overlay_alpha(4700.0, 0.8, true) < 12,
+            "suave evening must not punch orange"
+        );
+    }
+
+    #[test]
+    fn alta_night_is_a_wash_not_a_filter() {
+        let a = overlay_alpha(2700.0, 0.3, true);
+        assert!(a > 8, "alta night should tint a little, got {a}");
+        assert!(a < 45, "alta night must stay a wash, got {a}");
     }
 
     #[test]

@@ -58,7 +58,7 @@ impl Target {
             cct_kelvin: 1_000_000.0 / mired.max(1.0),
             brightness: 1.0 + (self.brightness - 1.0) * t,
             noise_gain: self.noise_gain * t,
-            noise: if t >= 0.5 { self.noise } else { None },
+            noise: if t >= 0.2 { self.noise } else { None },
         }
     }
 }
@@ -104,8 +104,8 @@ mod tests {
             noise_gain: 0.5,
             noise: Some(NoiseColor::Pink),
         };
-        assert_eq!(t.attenuate(0.3).noise, None);
-        assert_eq!(t.attenuate(0.5).noise, Some(NoiseColor::Pink));
+        assert_eq!(t.attenuate(0.1).noise, None);
+        assert_eq!(t.attenuate(0.3).noise, Some(NoiseColor::Pink));
     }
 
     #[test]

@@ -19,9 +19,9 @@ use crate::target::NoiseColor;
 
 const SR: u32 = 44_100;
 /// Noise is a wash under other audio, never a foreground track.
-const NOISE_SCALE: f32 = 0.10;
+const NOISE_SCALE: f32 = 0.40;
 /// Absolute ceiling after scale. User `max_volume` cannot exceed this.
-const HARD_CAP: f32 = 0.12;
+const HARD_CAP: f32 = 0.35;
 /// Seconds to fade between silence and target (smoothstep).
 const FADE_SECS: f32 = 4.0;
 

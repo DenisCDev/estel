@@ -9,6 +9,7 @@ pub enum TrayAction {
     TogglePause,
     ToggleAutostart,
     ToggleNoise,
+    PreviewNight,
     OpenSettings,
     SetIntensity(Intensity),
     Quit,
@@ -19,6 +20,7 @@ pub struct Tray {
     pause: CheckMenuItem,
     autostart: CheckMenuItem,
     noise: CheckMenuItem,
+    preview_id: MenuId,
     settings_id: MenuId,
     quit_id: MenuId,
     intensity_alta: CheckMenuItem,
@@ -41,9 +43,11 @@ impl Tray {
         let pause = CheckMenuItem::new("Pausar", true, false, None);
         let autostart = CheckMenuItem::new("Iniciar com o Windows", true, autostart_enabled, None);
         let noise = CheckMenuItem::new("Ruído noturno", true, noise_enabled, None);
+        let preview = MenuItem::new("Testar agora (20 s)", true, None);
         let settings = MenuItem::new("Configurações…", true, None);
         let quit = MenuItem::new("Fechar Estel", true, None);
 
+        let preview_id = preview.id().clone();
         let settings_id = settings.id().clone();
         let quit_id = quit.id().clone();
 
@@ -53,6 +57,7 @@ impl Tray {
         let _ = menu.append(&intensity_suave);
         let _ = menu.append(&PredefinedMenuItem::separator());
         let _ = menu.append(&noise);
+        let _ = menu.append(&preview);
         let _ = menu.append(&pause);
         let _ = menu.append(&autostart);
         let _ = menu.append(&PredefinedMenuItem::separator());
@@ -71,6 +76,7 @@ impl Tray {
             pause,
             autostart,
             noise,
+            preview_id,
             settings_id,
             quit_id,
             intensity_alta,
@@ -123,6 +129,9 @@ impl Tray {
         }
         if id == self.noise.id() {
             return Some(TrayAction::ToggleNoise);
+        }
+        if id == &self.preview_id {
+            return Some(TrayAction::PreviewNight);
         }
         if id == &self.settings_id {
             return Some(TrayAction::OpenSettings);

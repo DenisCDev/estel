@@ -13,8 +13,9 @@ use windows::Win32::Devices::Display::{
     DestroyPhysicalMonitor, GetMonitorBrightness, GetNumberOfPhysicalMonitorsFromHMONITOR,
     GetPhysicalMonitorsFromHMONITOR, PHYSICAL_MONITOR, SetMonitorBrightness,
 };
-use windows::Win32::Foundation::{HANDLE, POINT};
-use windows::Win32::Graphics::Gdi::{MONITOR_DEFAULTTOPRIMARY, MonitorFromPoint};
+use windows::Win32::Foundation::{HANDLE, LPARAM, RECT};
+use windows::core::BOOL;
+use windows::Win32::Graphics::Gdi::{EnumDisplayMonitors, HDC, HMONITOR};
 
 use crate::session;
 
@@ -37,19 +38,18 @@ pub fn init() -> bool {
     match build_states() {
         Ok(mut states) if !states.is_empty() => {
             if session::is_dirty() {
-                // Probe captured the *current* (possibly dimmed) level. Put
-                // the persisted pre-Estel value back and keep it as original
-                // — never rewrite ddc_original with the night snapshot.
-                if let Some(saved) = session::load_ddc_original() {
-                    for mon in &mut states {
-                        mon.original = saved.clamp(mon.min, mon.max);
+                let saved = session::load_ddc_originals();
+                for (i, mon) in states.iter_mut().enumerate() {
+                    if let Some(&v) = saved.get(i) {
+                        mon.original = v.clamp(mon.min, mon.max);
                         unsafe {
                             let _ = SetMonitorBrightness(handle(mon.raw_handle), mon.original);
                         }
                     }
                 }
-            } else if let Some(first) = states.first() {
-                session::save_ddc_original(first.original);
+            } else {
+                let originals: Vec<u32> = states.iter().map(|m| m.original).collect();
+                session::save_ddc_originals(&originals);
             }
             let n = states.len();
             let _ = MONITORS.set(states);
@@ -131,36 +131,59 @@ fn handle(raw: usize) -> HANDLE {
     HANDLE(raw as *mut core::ffi::c_void)
 }
 
+unsafe extern "system" fn on_monitor(
+    hmon: HMONITOR,
+    _hdc: HDC,
+    _rc: *mut RECT,
+    data: LPARAM,
+) -> BOOL {
+    let list = unsafe { &mut *(data.0 as *mut Vec<HMONITOR>) };
+    list.push(hmon);
+    BOOL(1)
+}
+
+fn enum_hmonitors() -> Vec<HMONITOR> {
+    let mut mons = Vec::new();
+    unsafe {
+        let _ = EnumDisplayMonitors(
+            None,
+            None,
+            Some(on_monitor),
+            LPARAM(&mut mons as *mut Vec<HMONITOR> as isize),
+        );
+    }
+    mons
+}
+
 fn build_states() -> anyhow::Result<Vec<MonState>> {
     unsafe {
-        let hmon = MonitorFromPoint(POINT { x: 0, y: 0 }, MONITOR_DEFAULTTOPRIMARY);
-
-        let mut count = 0u32;
-        GetNumberOfPhysicalMonitorsFromHMONITOR(hmon, &mut count)?;
-        if count == 0 {
-            return Ok(vec![]);
-        }
-
-        let mut phys: Vec<PHYSICAL_MONITOR> = (0..count)
-            .map(|_| PHYSICAL_MONITOR::default())
-            .collect();
-        GetPhysicalMonitorsFromHMONITOR(hmon, &mut phys)?;
-
         let mut states = Vec::new();
-        for p in &phys {
-            let mut mn = 0u32;
-            let mut cur = 0u32;
-            let mut mx = 0u32;
-            let ok = GetMonitorBrightness(p.hPhysicalMonitor, &mut mn, &mut cur, &mut mx);
-            if ok != 0 && mx > mn {
-                states.push(MonState {
-                    raw_handle: p.hPhysicalMonitor.0 as usize,
-                    min: mn,
-                    original: cur,
-                    max: mx,
-                });
-            } else {
-                let _ = DestroyPhysicalMonitor(p.hPhysicalMonitor);
+        for hmon in enum_hmonitors() {
+            let mut count = 0u32;
+            if GetNumberOfPhysicalMonitorsFromHMONITOR(hmon, &mut count).is_err() || count == 0 {
+                continue;
+            }
+            let mut phys: Vec<PHYSICAL_MONITOR> = (0..count)
+                .map(|_| PHYSICAL_MONITOR::default())
+                .collect();
+            if GetPhysicalMonitorsFromHMONITOR(hmon, &mut phys).is_err() {
+                continue;
+            }
+            for p in &phys {
+                let mut mn = 0u32;
+                let mut cur = 0u32;
+                let mut mx = 0u32;
+                let ok = GetMonitorBrightness(p.hPhysicalMonitor, &mut mn, &mut cur, &mut mx);
+                if ok != 0 && mx > mn {
+                    states.push(MonState {
+                        raw_handle: p.hPhysicalMonitor.0 as usize,
+                        min: mn,
+                        original: cur,
+                        max: mx,
+                    });
+                } else {
+                    let _ = DestroyPhysicalMonitor(p.hPhysicalMonitor);
+                }
             }
         }
         Ok(states)
