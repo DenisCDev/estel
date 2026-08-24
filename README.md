@@ -1,10 +1,35 @@
-# Estel
+<h1 align="center">Estel</h1>
 
-> *"Estel" é Sindarin para **esperança** — a calma de confiar que a noite passa, não a ansiedade de querer que algo aconteça.*
+<p align="center">
+  <b>Ambiente circadiano passivo: esquenta a tela, baixa o brilho e corta o azul de noite — sem prompt, sem conta, sem tratamento</b><br>
+  <sub><i>"May it be a light to you in dark places, when all other lights go out."</i></sub>
+</p>
 
-Estel é um ambiente ambient passivo, no estilo do f.lux, para Windows (e um irmão Android). Ao longo do dia ele esquenta a cor da tela, baixa o brilho e, se você quiser, coloca um ruído rosa/marrom bem baixo de noite.
+<p align="center">
+  <img src="https://img.shields.io/badge/rust-windows%20%2B%20android-D4A24E?labelColor=171310" alt="Rust no Windows e no Android">
+  <img src="https://img.shields.io/badge/biometria-zero-43A48E?labelColor=171310" alt="zero biometria">
+  <img src="https://img.shields.io/badge/cargo%20test-30%20ok-43A48E?labelColor=171310" alt="cargo test 30 ok">
+  <img src="https://img.shields.io/badge/license-MIT-D4A24E?labelColor=171310" alt="licença MIT">
+</p>
 
-**Não é um tratamento.** Não substitui acompanhamento clínico nem medicação. Os efeitos são reais e modestos: o ganho está em tirar estímulo que não precisava estar ali — tela branca-fria de madrugada, brilho no quarto escuro, som que começa seco.
+<p align="center">
+  <img src="assets/mtg-phial.jpg" width="640" alt="Frasco de Galadriel — arte de Andrea Piparo, Tales of Middle-earth (2023)">
+</p>
+
+> *"Phial of Galadriel"*, que a edição brasileira de **Magic: The Gathering** imprimiu como
+> **"Frasco de Galadriel"**. Arte de Andrea Piparo, Tales of Middle-earth (2023).
+> Uma luz pequena para o lugar escuro. É exatamente o serviço.
+
+**Estel** é Sindarin para esperança — a calma de confiar que a noite passa, não a
+ansiedade de querer que algo aconteça. O app é um ambiente ambient passivo, no
+estilo do f.lux, para Windows (e um irmão Android). Ao longo do dia ele esquenta
+a cor da tela, baixa o brilho e, se você quiser, coloca um ruído rosa/marrom bem
+baixo de noite.
+
+**Não é um tratamento.** Não substitui acompanhamento clínico nem medicação. Os
+efeitos são reais e modestos: o ganho está em tirar estímulo que não precisava
+estar ali — tela branca-fria de madrugada, brilho no quarto escuro, som que
+começa seco.
 
 ---
 
@@ -13,7 +38,7 @@ Estel é um ambiente ambient passivo, no estilo do f.lux, para Windows (e um irm
 Precisa do [Rust](https://rustup.rs) (toolchain `stable`, alvo GNU ou MSVC) e, no GNU, do MinGW no `PATH` (`gcc`, `as`, `dlltool` — o MSYS2 em `C:\msys64\mingw64\bin` serve).
 
 ```powershell
-git clone <url-deste-repo>
+git clone https://github.com/DenisCDev/estel.git
 cd estel
 .\install.ps1
 ```
