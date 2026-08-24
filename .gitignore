@@ -1,0 +1,12 @@
+/target
+**/*.rs.bk
+android/.gradle
+android/build
+android/app/build
+android/local.properties
+android/.idea
+*.iml
+.DS_Store
+.idea/
+session.bin
+*.pdb

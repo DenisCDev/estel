@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Estel</string>
+    <string name="tagline">Luz ao longo do dia</string>
+    <string name="disclaimer">Estel não é um tratamento. Só reduz o azul e o brilho da tela.</string>
+    <string name="label_enabled">Estel ativa</string>
+    <string name="label_overlay_permission">Conceder permissão de sobreposição</string>
+    <string name="label_location_section">Localização</string>
+    <string name="label_latitude">Latitude</string>
+    <string name="label_longitude">Longitude</string>
+    <string name="hint_latitude">Ex.: -23.55</string>
+    <string name="hint_longitude">Ex.: -46.63</string>
+    <string name="error_coord">Número inválido. Latitude −90 a 90, longitude −180 a 180. Ponto ou vírgula.</string>
+    <string name="label_schedule_section">Horários</string>
+    <string name="label_wake_time">Hora de acordar</string>
+    <string name="label_bed_time">Hora de dormir</string>
+    <string name="label_intensity_section">Intensidade</string>
+    <string name="label_intensity_alta">Alta</string>
+    <string name="label_intensity_media">Média</string>
+    <string name="label_intensity_suave">Suave</string>
+    <string name="notif_running">Estel está ativa</string>
+    <string name="channel_name">Estel</string>
+    <string name="channel_desc">Estel está ativa em segundo plano</string>
+</resources>

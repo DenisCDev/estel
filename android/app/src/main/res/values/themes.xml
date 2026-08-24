@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Paper + muted amber. No orange-red status bar, no clinical palette. -->
+    <style name="Theme.Estel" parent="Theme.MaterialComponents.Light.NoActionBar">
+        <item name="colorPrimary">#B87A3E</item>
+        <item name="colorPrimaryVariant">#FAFAF8</item>
+        <item name="colorOnPrimary">#FFFFFF</item>
+        <item name="colorSecondary">#B87A3E</item>
+        <item name="colorOnSecondary">#1A1A1A</item>
+        <item name="android:statusBarColor">#FAFAF8</item>
+        <item name="android:navigationBarColor">#FAFAF8</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowBackground">#FAFAF8</item>
+        <item name="android:textColorPrimary">#1A1A1A</item>
+        <item name="colorSurface">#FAFAF8</item>
+    </style>
+</resources>

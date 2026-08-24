@@ -1,0 +1,202 @@
+//! Full-screen warm-tint + dim overlay.
+//!
+//! Topmost, click-through, layered. Covers two jobs gamma cannot:
+//! - warmth below the ~3400 K gamma floor (Win11 clamp)
+//! - dimming when DDC is unavailable (laptop panels)
+//!
+//! PeekMessage is filtered to this HWND so we never steal another window's
+//! queue (tray / settings).
+
+use windows::Win32::Foundation::{COLORREF, HINSTANCE, HWND, LPARAM, LRESULT, WPARAM};
+use windows::Win32::Graphics::Gdi::{
+    BeginPaint, CreateSolidBrush, DeleteObject, EndPaint, FillRect, HBRUSH, HGDIOBJ, PAINTSTRUCT,
+};
+use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows::Win32::UI::WindowsAndMessaging::{
+    CreateWindowExW, DefWindowProcW, DispatchMessageW, GetSystemMetrics, PeekMessageW,
+    PostQuitMessage, RegisterClassExW, SetLayeredWindowAttributes, SetWindowPos, ShowWindow,
+    TranslateMessage, HWND_TOPMOST, SWP_NOACTIVATE, HCURSOR, HICON, MSG, WNDCLASSEXW, LWA_ALPHA,
+    PM_REMOVE, SM_CXSCREEN, SM_CYSCREEN, SW_HIDE, SW_SHOWNOACTIVATE, WM_DESTROY,
+    WM_DISPLAYCHANGE, WM_PAINT, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
+    WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP, WNDCLASS_STYLES,
+};
+use windows::core::{PCWSTR, w};
+
+unsafe extern "system" fn wnd_proc(
+    hwnd: HWND,
+    msg: u32,
+    wp: WPARAM,
+    lp: LPARAM,
+) -> LRESULT {
+    unsafe {
+        match msg {
+            WM_PAINT => {
+                let mut ps = PAINTSTRUCT::default();
+                let hdc = BeginPaint(hwnd, &mut ps);
+                // Warm desaturated amber: R=255 G=120 B=40 → COLORREF 0x00BBGGRR
+                let brush: HBRUSH = CreateSolidBrush(COLORREF(0x00_28_78_FF));
+                FillRect(hdc, &ps.rcPaint, brush);
+                let _ = DeleteObject(HGDIOBJ(brush.0));
+                let _ = EndPaint(hwnd, &ps);
+                LRESULT(0)
+            }
+            WM_DISPLAYCHANGE => {
+                resize_to_primary(hwnd);
+                LRESULT(0)
+            }
+            WM_DESTROY => {
+                PostQuitMessage(0);
+                LRESULT(0)
+            }
+            _ => DefWindowProcW(hwnd, msg, wp, lp),
+        }
+    }
+}
+
+fn resize_to_primary(hwnd: HWND) {
+    unsafe {
+        let sw = GetSystemMetrics(SM_CXSCREEN);
+        let sh = GetSystemMetrics(SM_CYSCREEN);
+        let _ = SetWindowPos(
+            hwnd,
+            Some(HWND_TOPMOST),
+            0,
+            0,
+            sw,
+            sh,
+            SWP_NOACTIVATE,
+        );
+    }
+}
+
+/// Create the overlay window. Must be called from the thread that will call
+/// `pump_messages()`.
+pub fn create() -> anyhow::Result<HWND> {
+    unsafe {
+        let hmodule = GetModuleHandleW(None)?;
+        let hinstance = HINSTANCE(hmodule.0);
+
+        let class_name = w!("EstelOverlay");
+        let wc = WNDCLASSEXW {
+            cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
+            style: WNDCLASS_STYLES(0),
+            lpfnWndProc: Some(wnd_proc),
+            cbClsExtra: 0,
+            cbWndExtra: 0,
+            hInstance: hinstance,
+            hIcon: HICON::default(),
+            hCursor: HCURSOR::default(),
+            hbrBackground: HBRUSH::default(),
+            lpszMenuName: PCWSTR::null(),
+            lpszClassName: class_name,
+            hIconSm: HICON::default(),
+        };
+        let _ = RegisterClassExW(&wc);
+
+        let sw = GetSystemMetrics(SM_CXSCREEN);
+        let sh = GetSystemMetrics(SM_CYSCREEN);
+
+        let hwnd = CreateWindowExW(
+            WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOPMOST
+                | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW,
+            class_name,
+            PCWSTR::null(),
+            WS_POPUP,
+            0, 0, sw, sh,
+            None,
+            None,
+            Some(hinstance),
+            None,
+        )?;
+
+        let _ = SetLayeredWindowAttributes(hwnd, COLORREF(0), 0, LWA_ALPHA);
+        Ok(hwnd)
+    }
+}
+
+/// Update tint + dim. Safe to call from any thread.
+///
+/// `ddc_active`: when true, DDC already dimmed the backlight — overlay only
+/// tints. When false (laptop / HDR / no MCCS), overlay also carries dim.
+pub fn update(hwnd: HWND, target_cct: f32, brightness: f32, ddc_active: bool) {
+    let alpha = overlay_alpha(target_cct, brightness, ddc_active);
+    unsafe {
+        let _ = SetLayeredWindowAttributes(hwnd, COLORREF(0), alpha, LWA_ALPHA);
+        if alpha == 0 {
+            let _ = ShowWindow(hwnd, SW_HIDE);
+        } else {
+            let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+        }
+    }
+}
+
+pub fn hide(hwnd: HWND) {
+    unsafe {
+        let _ = SetLayeredWindowAttributes(hwnd, COLORREF(0), 0, LWA_ALPHA);
+        let _ = ShowWindow(hwnd, SW_HIDE);
+    }
+}
+
+/// Drain messages for *this* overlay only.
+pub fn pump_messages(hwnd: HWND) {
+    unsafe {
+        let mut msg = MSG::default();
+        while PeekMessageW(&mut msg, Some(hwnd), 0, 0, PM_REMOVE).as_bool() {
+            let _ = TranslateMessage(&msg);
+            DispatchMessageW(&msg);
+        }
+    }
+}
+
+/// Warmth grows as CCT drops; dim grows as brightness drops, but only when
+/// DDC is not already doing that job. Capped so the wash stays a comfort
+/// layer, not a blackout.
+pub fn overlay_alpha(cct: f32, brightness: f32, ddc_active: bool) -> u8 {
+    const MAX_WARM: f32 = 70.0;
+    const MAX_DIM: f32 = 90.0;
+    const START_K: f32 = 5500.0;
+    const FLOOR_K: f32 = 1900.0;
+    const MAX_TOTAL: f32 = 140.0;
+
+    let warm = if cct >= START_K {
+        0.0
+    } else {
+        let t = ((START_K - cct) / (START_K - FLOOR_K)).clamp(0.0, 1.0);
+        let t = t * t * (3.0 - 2.0 * t);
+        t * MAX_WARM
+    };
+
+    let dim = if ddc_active || brightness >= 0.85 {
+        0.0
+    } else {
+        let t = (1.0 - brightness.clamp(0.0, 1.0)).clamp(0.0, 1.0);
+        let t = t * t * (3.0 - 2.0 * t);
+        t * MAX_DIM
+    };
+
+    (warm + dim).min(MAX_TOTAL) as u8
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn day_is_invisible() {
+        assert_eq!(overlay_alpha(6500.0, 0.9, false), 0);
+        assert_eq!(overlay_alpha(6500.0, 1.0, true), 0);
+    }
+
+    #[test]
+    fn night_without_ddc_is_darker_than_with_ddc() {
+        let laptop = overlay_alpha(2300.0, 0.18, false);
+        let desktop = overlay_alpha(2300.0, 0.18, true);
+        assert!(laptop > desktop, "{laptop} vs {desktop}");
+        assert!(laptop > 40, "laptop night must actually dim, got {laptop}");
+    }
+
+    #[test]
+    fn never_blacks_out() {
+        assert!(overlay_alpha(1900.0, 0.0, false) < 200);
+    }
+}

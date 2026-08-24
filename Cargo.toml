@@ -1,0 +1,41 @@
+[package]
+name = "estel"
+version = "0.1.0"
+edition = "2024"
+description = "Ambiente circadiano passivo para Windows — luz, brilho e ruído suaves."
+license = "MIT"
+repository = "https://github.com/condado/estel"
+readme = "README.md"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true
+
+[dependencies]
+anyhow = "1.0.103"
+chrono = "0.4.45"
+ctrlc = "3.4"
+directories = "6.0.0"
+serde = { version = "1.0.228", features = ["derive"] }
+sunrise = "3.0.0"
+toml = "1.1.2"
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+rodio = { version = "0.22", default-features = false, features = ["playback", "noise"] }
+
+[target.'cfg(windows)'.dependencies]
+auto-launch = "0.6"
+eframe = { version = "0.32", default-features = false, features = ["glow", "default_fonts"] }
+muda = "0.19"
+tray-icon = "0.24"
+windows = { version = "0.62.2", features = [
+    "Win32_Devices_Display",
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_Security",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Threading",
+    "Win32_UI_ColorSystem",
+    "Win32_UI_WindowsAndMessaging",
+] }
