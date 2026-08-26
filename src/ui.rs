@@ -235,18 +235,22 @@ impl eframe::App for SettingsApp {
 }
 
 fn section(ui: &mut egui::Ui, title: &str) {
-    ui.label(
-        RichText::new(title)
-            .size(11.0)
-            .color(MUTED)
-            .strong(),
-    );
+    ui.label(RichText::new(title).size(11.0).color(MUTED).strong());
     ui.add_space(8.0);
 }
 
-fn intensity_chip(ui: &mut egui::Ui, current: &mut Intensity, value: Intensity, label: &str) -> bool {
+fn intensity_chip(
+    ui: &mut egui::Ui,
+    current: &mut Intensity,
+    value: Intensity,
+    label: &str,
+) -> bool {
     let selected = *current == value;
-    let fill = if selected { AMBER } else { Color32::from_rgb(244, 243, 239) };
+    let fill = if selected {
+        AMBER
+    } else {
+        Color32::from_rgb(244, 243, 239)
+    };
     let text = if selected { Color32::WHITE } else { INK };
     let btn = egui::Button::new(RichText::new(label).color(text).size(13.0))
         .fill(fill)
@@ -266,8 +270,12 @@ fn time_row(ui: &mut egui::Ui, label: &str, h: &mut u32, m: &mut u32) -> bool {
     ui.horizontal(|ui| {
         ui.label(RichText::new(label).size(13.0).color(INK));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            changed |= ui.add(egui::DragValue::new(m).range(0..=59).suffix(" min")).changed();
-            changed |= ui.add(egui::DragValue::new(h).range(0..=23).suffix(" h")).changed();
+            changed |= ui
+                .add(egui::DragValue::new(m).range(0..=59).suffix(" min"))
+                .changed();
+            changed |= ui
+                .add(egui::DragValue::new(h).range(0..=23).suffix(" h"))
+                .changed();
         });
     });
     changed

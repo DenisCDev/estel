@@ -85,7 +85,8 @@ impl FromStr for Anchor {
         // "HH:MM"
         if let Some((h, m)) = s.split_once(':') {
             if let (Ok(h), Ok(m)) = (h.trim().parse::<u8>(), m.trim().parse::<u8>())
-                && h < 24 && m < 60
+                && h < 24
+                && m < 60
             {
                 return Ok(Anchor::Clock(h, m));
             }
@@ -215,7 +216,11 @@ impl Schedule {
 
         let span = (hi_min - lo_min).rem_euclid(DAY_MIN);
         let pos = (t - lo_min).rem_euclid(DAY_MIN);
-        let frac = if span <= 1e-6 { 0.0 } else { (pos / span).clamp(0.0, 1.0) };
+        let frac = if span <= 1e-6 {
+            0.0
+        } else {
+            (pos / span).clamp(0.0, 1.0)
+        };
         let s = smoothstep(frac) as f32;
 
         let lo = pts[lo_idx].1;
@@ -256,21 +261,51 @@ mod tests {
 
     fn ctx() -> DayContext {
         DayContext {
-            sunrise_min: 6.0 * 60.0,  // 06:00
-            sunset_min: 18.0 * 60.0,  // 18:00
-            wake_min: 7.0 * 60.0,     // 07:00
-            bed_min: 23.0 * 60.0,     // 23:00
+            sunrise_min: 6.0 * 60.0, // 06:00
+            sunset_min: 18.0 * 60.0, // 18:00
+            wake_min: 7.0 * 60.0,    // 07:00
+            bed_min: 23.0 * 60.0,    // 23:00
         }
     }
 
     fn sched() -> Schedule {
         Schedule {
             keypoints: vec![
-                Keypoint { anchor: Anchor::WakeOffset(0), cct_kelvin: 3400.0, brightness: 0.5, noise_gain: 0.7, noise: None },
-                Keypoint { anchor: Anchor::WakeOffset(120), cct_kelvin: 6500.0, brightness: 0.9, noise_gain: 0.9, noise: None },
-                Keypoint { anchor: Anchor::BedOffset(-180), cct_kelvin: 3400.0, brightness: 0.55, noise_gain: 0.5, noise: None },
-                Keypoint { anchor: Anchor::BedOffset(0), cct_kelvin: 2300.0, brightness: 0.18, noise_gain: 0.15, noise: Some(NoiseColor::Pink) },
-                Keypoint { anchor: Anchor::BedOffset(120), cct_kelvin: 1900.0, brightness: 0.0, noise_gain: 0.1, noise: Some(NoiseColor::Brown) },
+                Keypoint {
+                    anchor: Anchor::WakeOffset(0),
+                    cct_kelvin: 3400.0,
+                    brightness: 0.5,
+                    noise_gain: 0.7,
+                    noise: None,
+                },
+                Keypoint {
+                    anchor: Anchor::WakeOffset(120),
+                    cct_kelvin: 6500.0,
+                    brightness: 0.9,
+                    noise_gain: 0.9,
+                    noise: None,
+                },
+                Keypoint {
+                    anchor: Anchor::BedOffset(-180),
+                    cct_kelvin: 3400.0,
+                    brightness: 0.55,
+                    noise_gain: 0.5,
+                    noise: None,
+                },
+                Keypoint {
+                    anchor: Anchor::BedOffset(0),
+                    cct_kelvin: 2300.0,
+                    brightness: 0.18,
+                    noise_gain: 0.15,
+                    noise: Some(NoiseColor::Pink),
+                },
+                Keypoint {
+                    anchor: Anchor::BedOffset(120),
+                    cct_kelvin: 1900.0,
+                    brightness: 0.0,
+                    noise_gain: 0.1,
+                    noise: Some(NoiseColor::Brown),
+                },
             ],
         }
     }
@@ -333,7 +368,10 @@ mod tests {
         // not jump: small dt -> small change.
         let a = s.target_at(59.0, &c);
         let b = s.target_at(61.0, &c);
-        assert!((a.cct_kelvin - b.cct_kelvin).abs() < 50.0, "discontinuity at wrap");
+        assert!(
+            (a.cct_kelvin - b.cct_kelvin).abs() < 50.0,
+            "discontinuity at wrap"
+        );
     }
 
     #[test]

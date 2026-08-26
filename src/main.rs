@@ -99,8 +99,7 @@ fn main() -> anyhow::Result<()> {
         }
 
         let now = Local::now();
-        let now_min =
-            now.hour() as f64 * 60.0 + now.minute() as f64 + now.second() as f64 / 60.0;
+        let now_min = now.hour() as f64 * 60.0 + now.minute() as f64 + now.second() as f64 / 60.0;
 
         let (sr_min, ss_min) = solar_times(cfg.latitude, cfg.longitude, now.date_naive());
         let ctx = DayContext {
@@ -151,7 +150,9 @@ fn main() -> anyhow::Result<()> {
         } else if cfg.display_enabled {
             match display::apply(&target, cfg.gamma_warm_floor_k, cfg.min_brightness) {
                 Ok(true) => tracing::debug!(cct = target.cct_kelvin as u32, "gamma ok"),
-                Ok(false) => tracing::debug!(cct = target.cct_kelvin as u32, "gamma recusada ou ausente"),
+                Ok(false) => {
+                    tracing::debug!(cct = target.cct_kelvin as u32, "gamma recusada ou ausente")
+                }
                 Err(e) => tracing::error!("display::apply: {e}"),
             }
             overlay::update(
@@ -300,8 +301,11 @@ fn init_log() {
         .append(true)
         .open(&log_path);
 
-    let env = tracing_subscriber::EnvFilter::from_default_env()
-        .add_directive("estel=info".parse().unwrap_or_else(|_| "info".parse().unwrap()));
+    let env = tracing_subscriber::EnvFilter::from_default_env().add_directive(
+        "estel=info"
+            .parse()
+            .unwrap_or_else(|_| "info".parse().unwrap()),
+    );
 
     match file {
         Ok(f) => {
@@ -331,7 +335,13 @@ fn solar_times(lat: f64, lon: f64, date: NaiveDate) -> (f64, f64) {
         let local = dt.with_timezone(&Local);
         local.hour() as f64 * 60.0 + local.minute() as f64
     };
-    let sr = day.event_time(SolarEvent::Sunrise).map(to_min).unwrap_or(fallback.0);
-    let ss = day.event_time(SolarEvent::Sunset).map(to_min).unwrap_or(fallback.1);
+    let sr = day
+        .event_time(SolarEvent::Sunrise)
+        .map(to_min)
+        .unwrap_or(fallback.0);
+    let ss = day
+        .event_time(SolarEvent::Sunset)
+        .map(to_min)
+        .unwrap_or(fallback.1);
     (sr, ss)
 }

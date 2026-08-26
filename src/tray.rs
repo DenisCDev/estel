@@ -37,8 +37,10 @@ impl Tray {
         let icon = phial_icon()?;
 
         let intensity_alta = CheckMenuItem::new("Alta", true, intensity == Intensity::Alta, None);
-        let intensity_media = CheckMenuItem::new("Média", true, intensity == Intensity::Media, None);
-        let intensity_suave = CheckMenuItem::new("Suave", true, intensity == Intensity::Suave, None);
+        let intensity_media =
+            CheckMenuItem::new("Média", true, intensity == Intensity::Media, None);
+        let intensity_suave =
+            CheckMenuItem::new("Suave", true, intensity == Intensity::Suave, None);
 
         let pause = CheckMenuItem::new("Pausar", true, false, None);
         let autostart = CheckMenuItem::new("Iniciar com o Windows", true, autostart_enabled, None);
@@ -90,14 +92,18 @@ impl Tray {
     }
 
     pub fn set_intensity(&self, intensity: Intensity) {
-        self.intensity_alta.set_checked(intensity == Intensity::Alta);
-        self.intensity_media.set_checked(intensity == Intensity::Media);
-        self.intensity_suave.set_checked(intensity == Intensity::Suave);
+        self.intensity_alta
+            .set_checked(intensity == Intensity::Alta);
+        self.intensity_media
+            .set_checked(intensity == Intensity::Media);
+        self.intensity_suave
+            .set_checked(intensity == Intensity::Suave);
     }
 
     pub fn set_paused(&self, paused: bool) {
         self.pause.set_checked(paused);
-        self.pause.set_text(if paused { "Retomar" } else { "Pausar" });
+        self.pause
+            .set_text(if paused { "Retomar" } else { "Pausar" });
     }
 
     pub fn set_autostart(&self, enabled: bool) {
@@ -270,7 +276,9 @@ mod tests {
         assert!(
             body[1] + body[2] > body[0] * 1.4,
             "glass is teal/silver, not orange: r={} g={} b={}",
-            body[0], body[1], body[2]
+            body[0],
+            body[1],
+            body[2]
         );
         let corner = phial_pixel(0.02, 0.02);
         assert!(corner[3] < 20.0, "corners stay transparent");

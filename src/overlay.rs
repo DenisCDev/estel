@@ -14,22 +14,16 @@ use windows::Win32::Graphics::Gdi::{
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DispatchMessageW, GetSystemMetrics, PeekMessageW,
-    RegisterClassExW, SetLayeredWindowAttributes, SetWindowPos, ShowWindow,
-    TranslateMessage, HWND_TOPMOST, SWP_NOACTIVATE, HCURSOR, HICON, MSG, WNDCLASSEXW, LWA_ALPHA,
-    PM_REMOVE, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN,
-    SW_HIDE, SW_SHOWNOACTIVATE, WM_DESTROY, WM_QUIT, WM_DISPLAYCHANGE, WM_PAINT,
-    WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT,
-    WS_POPUP, WNDCLASS_STYLES,
+    CreateWindowExW, DefWindowProcW, DispatchMessageW, GetSystemMetrics, HCURSOR, HICON,
+    HWND_TOPMOST, LWA_ALPHA, MSG, PM_REMOVE, PeekMessageW, RegisterClassExW, SM_CXVIRTUALSCREEN,
+    SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SW_HIDE, SW_SHOWNOACTIVATE,
+    SWP_NOACTIVATE, SetLayeredWindowAttributes, SetWindowPos, ShowWindow, TranslateMessage,
+    WM_DESTROY, WM_DISPLAYCHANGE, WM_PAINT, WM_QUIT, WNDCLASS_STYLES, WNDCLASSEXW, WS_EX_LAYERED,
+    WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
 };
 use windows::core::{PCWSTR, w};
 
-unsafe extern "system" fn wnd_proc(
-    hwnd: HWND,
-    msg: u32,
-    wp: WPARAM,
-    lp: LPARAM,
-) -> LRESULT {
+unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
     unsafe {
         match msg {
             WM_PAINT => {
@@ -97,12 +91,14 @@ pub fn create() -> anyhow::Result<HWND> {
         let (x, y, w, h) = virtual_rect();
 
         let hwnd = CreateWindowExW(
-            WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOPMOST
-                | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW,
+            WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOPMOST | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW,
             class_name,
             PCWSTR::null(),
             WS_POPUP,
-            x, y, w, h,
+            x,
+            y,
+            w,
+            h,
             None,
             None,
             Some(hinstance),

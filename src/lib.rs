@@ -14,11 +14,11 @@ pub mod display;
 pub mod overlay;
 pub mod schedule;
 pub mod session;
+pub mod target;
 #[cfg(windows)]
 pub mod tray;
 #[cfg(windows)]
 pub mod ui;
-pub mod target;
 
 pub use color::{GammaRamp, build_gamma_ramp, cct_to_rgb, clamp_ramp_to_driver, identity_ramp};
 pub use config::Config;

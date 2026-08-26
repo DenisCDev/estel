@@ -31,7 +31,7 @@ impl Intensity {
     /// Multiplier applied to all schedule deltas (0.0 = neutral, 1.0 = full).
     pub fn factor(self) -> f32 {
         match self {
-            Intensity::Alta  => 1.0,
+            Intensity::Alta => 1.0,
             Intensity::Media => 0.6,
             Intensity::Suave => 0.3,
         }
@@ -39,7 +39,7 @@ impl Intensity {
 
     pub fn label(self) -> &'static str {
         match self {
-            Intensity::Alta  => "Alta",
+            Intensity::Alta => "Alta",
             Intensity::Media => "Média",
             Intensity::Suave => "Suave",
         }
@@ -104,14 +104,62 @@ impl Default for Config {
 fn default_schedule() -> Schedule {
     Schedule {
         keypoints: vec![
-            Keypoint { anchor: Anchor::BedOffset(120),   cct_kelvin: 1900.0, brightness: 0.0,  noise_gain: 0.55, noise: Some(NoiseColor::Brown) },
-            Keypoint { anchor: Anchor::WakeOffset(0),    cct_kelvin: 3400.0, brightness: 0.50, noise_gain: 0.0,  noise: None },
-            Keypoint { anchor: Anchor::WakeOffset(90),   cct_kelvin: 6500.0, brightness: 0.90, noise_gain: 0.0,  noise: None },
-            Keypoint { anchor: Anchor::SunsetOffset(-15), cct_kelvin: 6500.0, brightness: 0.85, noise_gain: 0.0,  noise: None },
-            Keypoint { anchor: Anchor::SunsetOffset(45),  cct_kelvin: 3800.0, brightness: 0.55, noise_gain: 0.45, noise: Some(NoiseColor::Pink) },
-            Keypoint { anchor: Anchor::SunsetOffset(120), cct_kelvin: 2800.0, brightness: 0.38, noise_gain: 0.70, noise: Some(NoiseColor::Pink) },
-            Keypoint { anchor: Anchor::BedOffset(-30),   cct_kelvin: 2300.0, brightness: 0.22, noise_gain: 0.80, noise: Some(NoiseColor::Brown) },
-            Keypoint { anchor: Anchor::BedOffset(0),     cct_kelvin: 2100.0, brightness: 0.16, noise_gain: 0.55, noise: Some(NoiseColor::Brown) },
+            Keypoint {
+                anchor: Anchor::BedOffset(120),
+                cct_kelvin: 1900.0,
+                brightness: 0.0,
+                noise_gain: 0.55,
+                noise: Some(NoiseColor::Brown),
+            },
+            Keypoint {
+                anchor: Anchor::WakeOffset(0),
+                cct_kelvin: 3400.0,
+                brightness: 0.50,
+                noise_gain: 0.0,
+                noise: None,
+            },
+            Keypoint {
+                anchor: Anchor::WakeOffset(90),
+                cct_kelvin: 6500.0,
+                brightness: 0.90,
+                noise_gain: 0.0,
+                noise: None,
+            },
+            Keypoint {
+                anchor: Anchor::SunsetOffset(-15),
+                cct_kelvin: 6500.0,
+                brightness: 0.85,
+                noise_gain: 0.0,
+                noise: None,
+            },
+            Keypoint {
+                anchor: Anchor::SunsetOffset(45),
+                cct_kelvin: 3800.0,
+                brightness: 0.55,
+                noise_gain: 0.45,
+                noise: Some(NoiseColor::Pink),
+            },
+            Keypoint {
+                anchor: Anchor::SunsetOffset(120),
+                cct_kelvin: 2800.0,
+                brightness: 0.38,
+                noise_gain: 0.70,
+                noise: Some(NoiseColor::Pink),
+            },
+            Keypoint {
+                anchor: Anchor::BedOffset(-30),
+                cct_kelvin: 2300.0,
+                brightness: 0.22,
+                noise_gain: 0.80,
+                noise: Some(NoiseColor::Brown),
+            },
+            Keypoint {
+                anchor: Anchor::BedOffset(0),
+                cct_kelvin: 2100.0,
+                brightness: 0.16,
+                noise_gain: 0.55,
+                noise: Some(NoiseColor::Brown),
+            },
         ],
     }
 }
@@ -147,7 +195,9 @@ impl Config {
                     cfg
                 }
                 Err(e) => {
-                    tracing::error!("config.toml inválido ({e}); usando padrões. O arquivo original foi copiado para config.toml.invalid");
+                    tracing::error!(
+                        "config.toml inválido ({e}); usando padrões. O arquivo original foi copiado para config.toml.invalid"
+                    );
                     let bak = path.with_extension("toml.invalid");
                     let _ = std::fs::copy(&path, &bak);
                     let mut cfg = Config::default();
@@ -159,7 +209,10 @@ impl Config {
                 let mut cfg = Config::default();
                 cfg.sanitize();
                 if let Err(e) = cfg.save(&path) {
-                    tracing::warn!("não foi possível gravar o config padrão em {}: {e}", path.display());
+                    tracing::warn!(
+                        "não foi possível gravar o config padrão em {}: {e}",
+                        path.display()
+                    );
                 }
                 cfg
             }
@@ -189,7 +242,11 @@ impl Config {
     /// the warm + noise start when the sun actually goes down.
     fn migrate_schedule_to_sunset(&mut self) -> bool {
         let has_solar = self.schedule.keypoints.iter().any(|k| {
-            matches!(k.anchor, crate::schedule::Anchor::SunsetOffset(_) | crate::schedule::Anchor::SunriseOffset(_))
+            matches!(
+                k.anchor,
+                crate::schedule::Anchor::SunsetOffset(_)
+                    | crate::schedule::Anchor::SunriseOffset(_)
+            )
         });
         if has_solar {
             return false;
@@ -209,10 +266,14 @@ impl Config {
     }
 
     /// Wake time as minutes since local midnight.
-    pub fn wake_min(&self) -> f64 { parse_hhmm(&self.wake) }
+    pub fn wake_min(&self) -> f64 {
+        parse_hhmm(&self.wake)
+    }
 
     /// Bed time as minutes since local midnight.
-    pub fn bed_min(&self) -> f64 { parse_hhmm(&self.bed) }
+    pub fn bed_min(&self) -> f64 {
+        parse_hhmm(&self.bed)
+    }
 }
 
 fn parse_hhmm(s: &str) -> f64 {
@@ -245,7 +306,7 @@ mod tests {
 
     #[test]
     fn intensity_factors() {
-        assert_eq!(Intensity::Alta.factor(),  1.0);
+        assert_eq!(Intensity::Alta.factor(), 1.0);
         assert_eq!(Intensity::Media.factor(), 0.6);
         assert_eq!(Intensity::Suave.factor(), 0.3);
     }

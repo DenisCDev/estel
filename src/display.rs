@@ -7,8 +7,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use windows::Win32::Foundation::GetLastError;
 use windows::Win32::Graphics::Gdi::{
-    CreateDCW, DISPLAY_DEVICEW, DISPLAY_DEVICE_ATTACHED_TO_DESKTOP,
-    DISPLAY_DEVICE_MIRRORING_DRIVER, DeleteDC, EnumDisplayDevicesW,
+    CreateDCW, DISPLAY_DEVICE_ATTACHED_TO_DESKTOP, DISPLAY_DEVICE_MIRRORING_DRIVER,
+    DISPLAY_DEVICEW, DeleteDC, EnumDisplayDevicesW,
 };
 use windows::Win32::UI::ColorSystem::{GetDeviceGammaRamp, SetDeviceGammaRamp};
 use windows::core::{PCWSTR, w};
@@ -37,9 +37,7 @@ pub fn init() -> bool {
     for name in enum_device_names() {
         match read_named(&name) {
             Ok(ramp) => heads.push(Head { name, saved: ramp }),
-            Err(e) => tracing::debug!(
-                "gamma indisponível em um output ({e}) — overlay cobre esse"
-            ),
+            Err(e) => tracing::debug!("gamma indisponível em um output ({e}) — overlay cobre esse"),
         }
     }
 

@@ -121,7 +121,10 @@ mod tests {
         let warm = cct_to_rgb(2300.0)[2];
         let mid = cct_to_rgb(3400.0)[2];
         let cool = cct_to_rgb(6500.0)[2];
-        assert!(warm < mid && mid < cool, "blue must rise with K: {warm} {mid} {cool}");
+        assert!(
+            warm < mid && mid < cool,
+            "blue must rise with K: {warm} {mid} {cool}"
+        );
     }
 
     #[test]
@@ -131,7 +134,10 @@ mod tests {
             assert_eq!(channel[0], 0);
             assert_eq!(channel[255], 65535);
             for i in 1..256 {
-                assert!(channel[i] >= channel[i - 1], "channel {ch} not monotonic at {i}");
+                assert!(
+                    channel[i] >= channel[i - 1],
+                    "channel {ch} not monotonic at {i}"
+                );
             }
         }
     }
@@ -142,7 +148,10 @@ mod tests {
         let ramp = build_gamma_ramp([1.0, 1.0, 1.0], 0.0, 0.3);
         let top = ramp[0][255];
         let expected = (65535.0 * 0.3) as u16;
-        assert!((top as i32 - expected as i32).abs() < 300, "floor not applied: {top}");
+        assert!(
+            (top as i32 - expected as i32).abs() < 300,
+            "floor not applied: {top}"
+        );
     }
 
     #[test]

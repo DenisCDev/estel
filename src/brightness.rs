@@ -14,8 +14,8 @@ use windows::Win32::Devices::Display::{
     GetPhysicalMonitorsFromHMONITOR, PHYSICAL_MONITOR, SetMonitorBrightness,
 };
 use windows::Win32::Foundation::{HANDLE, LPARAM, RECT};
-use windows::core::BOOL;
 use windows::Win32::Graphics::Gdi::{EnumDisplayMonitors, HDC, HMONITOR};
+use windows::core::BOOL;
 
 use crate::session;
 
@@ -90,8 +90,8 @@ pub fn apply(brightness: f32) {
     }
     for mon in states {
         let range = mon.max.saturating_sub(mon.min);
-        let val = (mon.min + (brightness.clamp(0.0, 1.0) * range as f32) as u32)
-            .clamp(mon.min, mon.max);
+        let val =
+            (mon.min + (brightness.clamp(0.0, 1.0) * range as f32) as u32).clamp(mon.min, mon.max);
         unsafe {
             let _ = SetMonitorBrightness(handle(mon.raw_handle), val);
         }
@@ -163,9 +163,8 @@ fn build_states() -> anyhow::Result<Vec<MonState>> {
             if GetNumberOfPhysicalMonitorsFromHMONITOR(hmon, &mut count).is_err() || count == 0 {
                 continue;
             }
-            let mut phys: Vec<PHYSICAL_MONITOR> = (0..count)
-                .map(|_| PHYSICAL_MONITOR::default())
-                .collect();
+            let mut phys: Vec<PHYSICAL_MONITOR> =
+                (0..count).map(|_| PHYSICAL_MONITOR::default()).collect();
             if GetPhysicalMonitorsFromHMONITOR(hmon, &mut phys).is_err() {
                 continue;
             }
