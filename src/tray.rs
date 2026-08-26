@@ -11,6 +11,7 @@ pub enum TrayAction {
     ToggleNoise,
     PreviewNight,
     OpenSettings,
+    CheckUpdates,
     SetIntensity(Intensity),
     Quit,
 }
@@ -22,6 +23,7 @@ pub struct Tray {
     noise: CheckMenuItem,
     preview_id: MenuId,
     settings_id: MenuId,
+    updates_id: MenuId,
     quit_id: MenuId,
     intensity_alta: CheckMenuItem,
     intensity_media: CheckMenuItem,
@@ -47,10 +49,16 @@ impl Tray {
         let noise = CheckMenuItem::new("Ruído noturno", true, noise_enabled, None);
         let preview = MenuItem::new("Testar agora (20 s)", true, None);
         let settings = MenuItem::new("Configurações…", true, None);
+        let updates = MenuItem::new(
+            format!("Buscar atualização · v{}", env!("CARGO_PKG_VERSION")),
+            true,
+            None,
+        );
         let quit = MenuItem::new("Fechar Estel", true, None);
 
         let preview_id = preview.id().clone();
         let settings_id = settings.id().clone();
+        let updates_id = updates.id().clone();
         let quit_id = quit.id().clone();
 
         let menu = Menu::new();
@@ -64,6 +72,7 @@ impl Tray {
         let _ = menu.append(&autostart);
         let _ = menu.append(&PredefinedMenuItem::separator());
         let _ = menu.append(&settings);
+        let _ = menu.append(&updates);
         let _ = menu.append(&quit);
 
         let tray = TrayIconBuilder::new()
@@ -80,6 +89,7 @@ impl Tray {
             noise,
             preview_id,
             settings_id,
+            updates_id,
             quit_id,
             intensity_alta,
             intensity_media,
@@ -142,6 +152,9 @@ impl Tray {
         if id == &self.settings_id {
             return Some(TrayAction::OpenSettings);
         }
+        if id == &self.updates_id {
+            return Some(TrayAction::CheckUpdates);
+        }
         if id == &self.quit_id {
             return Some(TrayAction::Quit);
         }
@@ -169,14 +182,19 @@ impl Autostart {
         self.0.is_enabled().unwrap_or(false)
     }
 
-    pub fn toggle(&self) -> bool {
-        if self.is_enabled() {
-            let _ = self.0.disable();
-            false
+    pub fn toggle(&self) -> anyhow::Result<bool> {
+        let was_enabled = self.0.is_enabled()?;
+        if was_enabled {
+            self.0.disable()?;
         } else {
-            let _ = self.0.enable();
-            true
+            self.0.enable()?;
         }
+
+        let enabled = self.0.is_enabled()?;
+        if enabled == was_enabled {
+            anyhow::bail!("o Windows não confirmou a alteração do início automático");
+        }
+        Ok(enabled)
     }
 }
 

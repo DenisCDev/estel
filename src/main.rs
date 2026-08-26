@@ -8,8 +8,11 @@ use std::sync::{
 use std::time::{Duration, Instant};
 
 use chrono::{Local, NaiveDate, Timelike};
-use windows::Win32::Foundation::{ERROR_ALREADY_EXISTS, GetLastError};
-use windows::Win32::System::Threading::CreateMutexW;
+use windows::Win32::Foundation::{ERROR_ALREADY_EXISTS, GetLastError, WAIT_OBJECT_0};
+use windows::Win32::System::Threading::{
+    CreateEventW, CreateMutexW, SetEvent, WaitForSingleObject,
+};
+use windows::Win32::UI::WindowsAndMessaging::{MB_ICONERROR, MB_OK, MessageBoxW};
 use windows::core::w;
 
 use estel::audio::Audio;
@@ -24,14 +27,18 @@ use estel::tray::{Autostart, Tray, TrayAction};
 
 fn main() -> anyhow::Result<()> {
     init_log();
+    let open_settings_on_start = std::env::args_os().any(|arg| arg == "--settings");
 
-    unsafe {
-        CreateMutexW(None, false, w!("Local\\EstelSingleInstance"))?;
+    let (settings_event, _instance_mutex) = unsafe {
+        let event = CreateEventW(None, false, false, w!("Local\\EstelOpenSettings"))?;
+        let instance_mutex = CreateMutexW(None, false, w!("Local\\EstelSingleInstance"))?;
         if GetLastError() == ERROR_ALREADY_EXISTS {
+            SetEvent(event)?;
             tracing::info!("Estel já está em execução");
             return Ok(());
         }
-    }
+        (event, instance_mutex)
+    };
 
     let mut cfg = Config::load_or_default();
     tracing::info!(
@@ -77,6 +84,9 @@ fn main() -> anyhow::Result<()> {
 
     let (cfg_tx, cfg_rx) = mpsc::channel::<Config>();
     let settings_open = Arc::new(AtomicBool::new(false));
+    if open_settings_on_start {
+        open_settings(cfg.clone(), cfg_tx.clone(), settings_open.clone());
+    }
 
     let running = Arc::new(AtomicBool::new(true));
     {
@@ -184,6 +194,10 @@ fn main() -> anyhow::Result<()> {
         while elapsed < tick && running.load(Ordering::SeqCst) && !kick {
             overlay::pump_messages();
 
+            if unsafe { WaitForSingleObject(settings_event, 0) } == WAIT_OBJECT_0 {
+                open_settings(cfg.clone(), cfg_tx.clone(), settings_open.clone());
+            }
+
             if let Some(action) = tray.poll() {
                 match action {
                     TrayAction::Quit => {
@@ -207,9 +221,21 @@ fn main() -> anyhow::Result<()> {
                     }
                     TrayAction::ToggleAutostart => {
                         if let Some(ref a) = autostart {
-                            let enabled = a.toggle();
-                            tray.set_autostart(enabled);
-                            tracing::info!(enabled, "início automático");
+                            match a.toggle() {
+                                Ok(enabled) => {
+                                    tray.set_autostart(enabled);
+                                    tracing::info!(enabled, "início automático");
+                                }
+                                Err(e) => {
+                                    tray.set_autostart(a.is_enabled());
+                                    tracing::error!(
+                                        "não foi possível alterar o início automático: {e}"
+                                    );
+                                    show_error(w!(
+                                        "O Windows não permitiu alterar o início automático."
+                                    ));
+                                }
+                            }
                         }
                     }
                     TrayAction::ToggleNoise => {
@@ -225,6 +251,14 @@ fn main() -> anyhow::Result<()> {
                     }
                     TrayAction::OpenSettings => {
                         open_settings(cfg.clone(), cfg_tx.clone(), settings_open.clone());
+                    }
+                    TrayAction::CheckUpdates => {
+                        if let Err(e) =
+                            webbrowser::open("https://github.com/DenisCDev/estel/releases/latest")
+                        {
+                            tracing::error!("não foi possível abrir a página de atualização: {e}");
+                            show_error(w!("Não foi possível abrir a página de atualização."));
+                        }
                     }
                     TrayAction::SetIntensity(level) => {
                         cfg.intensity = level;
@@ -262,6 +296,12 @@ fn main() -> anyhow::Result<()> {
     brightness::restore();
     tracing::info!("Estel encerrado — monitor restaurado");
     Ok(())
+}
+
+fn show_error(message: windows::core::PCWSTR) {
+    unsafe {
+        let _ = MessageBoxW(None, message, w!("Estel"), MB_OK | MB_ICONERROR);
+    }
 }
 
 fn persist(cfg: &Config) {

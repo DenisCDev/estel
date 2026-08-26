@@ -2,9 +2,9 @@
 name = "estel"
 version = "0.1.0"
 edition = "2024"
-description = "Ambiente circadiano passivo para Windows — luz, brilho e ruído suaves."
+description = "Aplicativo para ajustar cor e brilho no Windows, com som ambiente opcional."
 license = "MIT"
-repository = "https://github.com/condado/estel"
+repository = "https://github.com/DenisCDev/estel"
 readme = "README.md"
 
 [profile.release]
@@ -23,6 +23,7 @@ toml = "1.1.2"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 rodio = { version = "0.22", default-features = false, features = ["playback", "noise"] }
+webbrowser = "1.2.4"
 
 [target.'cfg(windows)'.dependencies]
 auto-launch = "0.6"

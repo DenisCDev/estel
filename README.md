@@ -33,15 +33,22 @@ os efeitos variam de pessoa para pessoa.
 
 ## Instalar (Windows)
 
-Precisa do [Rust](https://rustup.rs) (toolchain `stable`, alvo GNU ou MSVC) e, no GNU, do MinGW no `PATH` (`gcc`, `as`, `dlltool` — o MSYS2 em `C:\msys64\mingw64\bin` serve).
+Não precisa instalar Git, Rust nem abrir o terminal.
 
-```powershell
-git clone https://github.com/DenisCDev/estel.git
-cd estel
-.\install.ps1
-```
+1. [Baixe o instalador do Estel para Windows](https://github.com/DenisCDev/estel/releases/latest/download/Estel-Setup-x86_64.exe).
+2. Abra `Estel-Setup-x86_64.exe` e avance pelo instalador.
+3. No fim, deixe **Abrir Estel** marcado. As configurações abrem e o ícone fica
+   ao lado do relógio ou dentro da seta **Mostrar ícones ocultos**.
 
-O script compila em release, copia `estel.exe` para `%LOCALAPPDATA%\Estel` e inicia o app. O ícone aparece na bandeja.
+O instalador funciona por usuário, sem pedir senha de administrador. Ele cria um
+atalho no menu Iniciar e pode ser removido pelas Configurações do Windows. Como
+o aplicativo ainda não tem assinatura digital, o Windows pode mostrar o
+SmartScreen: clique em **Mais informações** e depois em **Executar assim mesmo**.
+
+Quem não quiser instalar pode baixar o
+[`estel-portable-x86_64.exe`](https://github.com/DenisCDev/estel/releases/latest/download/estel-portable-x86_64.exe)
+na mesma página. O portátil guarda as configurações no mesmo local da versão
+instalada.
 
 Na bandeja:
 
@@ -49,9 +56,17 @@ Na bandeja:
 - **Ruído noturno** — rosa de noite, marrom perto do sono; começa e termina em fade de 4 s; volume tem teto duro
 - **Pausar** — devolve a tela agora, sem fechar
 - **Configurações…** — acordar, dormir, volume, localização
+- **Buscar atualização** — mostra a versão instalada e abre a versão mais recente
 - **Fechar Estel** — restaura gama e backlight
 
 Primeira execução grava `%APPDATA%\condado\estel\config\config.toml`.
+
+### Atualizar ou remover
+
+Para atualizar, baixe o instalador mais recente pelo mesmo botão acima e abra o
+arquivo. Ele substitui o aplicativo e preserva suas configurações. Para remover,
+abra **Configurações do Windows → Aplicativos → Aplicativos instalados**, procure
+por **Estel** e escolha **Desinstalar**.
 
 ### Android
 
@@ -111,12 +126,17 @@ Não tem prompt, não tem conta, não sai dado da máquina.
 ## Desenvolvimento
 
 ```powershell
+# precisa de Rust apenas para desenvolver ou compilar o projeto
 # engine pura, sem janela
 cargo test
 
 # app
 cargo run --release
 ```
+
+O `install.ps1` também é voltado a desenvolvimento: compila o código local e
+instala esse build em `%LOCALAPPDATA%\Estel`. Para uso normal, baixe o instalador
+pronto na seção acima.
 
 O motor (`color`, `schedule`, `target`, `config`) não chama o sistema operacional. O host Windows aplica o `Target` em gama, DDC, overlay e áudio. O Android aplica o mesmo `Target` numa sobreposição.
 
