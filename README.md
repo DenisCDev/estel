@@ -1,14 +1,13 @@
 <h1 align="center">Estel</h1>
 
 <p align="center">
-  <b>Ambiente circadiano passivo: esquenta a tela, baixa o brilho e corta o azul de noite — sem prompt, sem conta, sem tratamento</b><br>
-  <sub><i>"May it be a light to you in dark places, when all other lights go out."</i></sub>
+  <b>Aplicativo para Windows e Android que ajusta a cor e o brilho da tela ao longo do dia</b>
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/rust-windows%20%2B%20android-D4A24E?labelColor=171310" alt="Rust no Windows e no Android">
-  <img src="https://img.shields.io/badge/biometria-zero-43A48E?labelColor=171310" alt="zero biometria">
-  <img src="https://img.shields.io/badge/cargo%20test-30%20ok-43A48E?labelColor=171310" alt="cargo test 30 ok">
+  <img src="https://img.shields.io/badge/windows-rust-D4A24E?labelColor=171310" alt="aplicativo Windows em Rust">
+  <img src="https://img.shields.io/badge/android-kotlin-D4A24E?labelColor=171310" alt="aplicativo Android em Kotlin">
+  <img src="https://img.shields.io/badge/dados-locais-43A48E?labelColor=171310" alt="dados mantidos localmente">
   <img src="https://img.shields.io/badge/license-MIT-D4A24E?labelColor=171310" alt="licença MIT">
 </p>
 
@@ -16,20 +15,19 @@
   <img src="assets/mtg-phial.jpg" width="640" alt="Frasco de Galadriel — arte de Andrea Piparo, Tales of Middle-earth (2023)">
 </p>
 
-> *"Phial of Galadriel"*, que a edição brasileira de **Magic: The Gathering** imprimiu como
-> **"Frasco de Galadriel"**. Arte de Andrea Piparo, Tales of Middle-earth (2023).
-> Uma luz pequena para o lugar escuro. É exatamente o serviço.
+<p align="center">
+  <sub><i>"a light to you in dark places"</i><br>
+  — <b>A Sociedade do Anel</b>, livro II, capítulo VIII · arte de Andrea Piparo para Magic: The Gathering, Tales of Middle-earth (2023)
+</p>
 
-**Estel** é Sindarin para esperança — a calma de confiar que a noite passa, não a
-ansiedade de querer que algo aconteça. O app é um ambiente ambient passivo, no
-estilo do f.lux, para Windows (e um irmão Android). Ao longo do dia ele esquenta
-a cor da tela, baixa o brilho e, se você quiser, coloca um ruído rosa/marrom bem
-baixo de noite.
+O Estel muda gradualmente a temperatura de cor e o brilho da tela no Windows e
+no Android. A versão Windows também pode tocar ruído rosa ou marrom em volume
+baixo durante a noite. Tudo roda no aparelho, sem conta e sem coleta de dados
+biométricos.
 
-**Não é um tratamento.** Não substitui acompanhamento clínico nem medicação. Os
-efeitos são reais e modestos: o ganho está em tirar estímulo que não precisava
-estar ali — tela branca-fria de madrugada, brilho no quarto escuro, som que
-começa seco.
+**Não é um tratamento médico** e não substitui acompanhamento profissional ou
+medicação. As referências no fim do documento explicam as decisões de produto;
+os efeitos variam de pessoa para pessoa.
 
 ---
 
@@ -57,21 +55,21 @@ Primeira execução grava `%APPDATA%\condado\estel\config\config.toml`.
 
 ### Android
 
-Abra `android/` no Android Studio, rode no aparelho. Na primeira abertura conceda a permissão de sobreposição — sem ela a camada quente não aparece. O serviço sobe sozinho se Estel estiver ativa.
+Abra `android/` no Android Studio e rode no aparelho. Na primeira abertura,
+conceda a permissão de sobreposição — sem ela a camada quente não aparece. O
+serviço aplica apenas os ajustes visuais; o som ambiente está disponível na
+versão Windows.
 
 ---
 
-## O que faz (e por quê)
+## O que faz e por quê
 
-Só o que a evidência segura: **temperatura de cor**, **menos azul de noite**, **menos brilho**, **som sem susto**.
-
-| O quê | Por quê | Força |
+| Ajuste | Objetivo | Como funciona |
 |---|---|---|
-| Curva de CCT (tipo f.lux), interpolada em mired, transições em smoothstep | Luz quente relaxa; luz fria em alta luminância aumenta excitação medida | Moderada |
-| Cortar azul-ciano (~480 nm) de noite | ipRGC / melanopsina; consenso Brown et al. 2022 | Mecanismo forte |
-| Baixar o brilho (DDC no monitor; overlay no notebook) | Tela brilhante no quarto escuro é re-adaptação constante | Moderada |
-| Nunca piscar a UI, nunca dimmar por PWM de software | Flicker sub-visível aumenta cefaleia e FC em quem é sensível | Forte na minoria |
-| Ruído rosa/marrom opcional, envelope ≥ 4 s, teto de volume | 1/f ajuda início de sono; ataque rápido é reflexo de sobressalto | Moderada / forte (ataque) |
+| Temperatura de cor | Reduzir luz azul-ciano no período noturno | Curva gradual em mired, com transições suaves |
+| Brilho | Evitar uma tela muito clara em um ambiente escuro | DDC no monitor ou camada escura no notebook |
+| Estabilidade visual | Evitar mudanças bruscas e cintilação criada pelo aplicativo | Sem piscar a interface nem simular PWM por software |
+| Som opcional no Windows | Criar um fundo constante sem início ou fim abrupto | Ruído rosa ou marrom, transição de pelo menos 4 s e limite de volume |
 
 A curva padrão (ajustável pelos horários de acordar/dormir):
 
