@@ -5,18 +5,32 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use ccap::{PixelFormat, PropertyName, Provider};
+use windows::Win32::Media::MediaFoundation::{
+    IMFActivate, IMFMediaSource, MF_DEVSOURCE_ATTRIBUTE_FRIENDLY_NAME,
+    MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE, MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_GUID,
+    MF_MT_MAJOR_TYPE, MF_MT_SUBTYPE, MF_SOURCE_READER_FIRST_VIDEO_STREAM, MF_VERSION,
+    MFCreateAttributes, MFCreateMediaType, MFCreateSourceReaderFromMediaSource,
+    MFEnumDeviceSources, MFMediaType_Video, MFSTARTUP_LITE, MFShutdown, MFStartup,
+    MFVideoFormat_YUY2,
+};
+use windows::Win32::System::Com::CoTaskMemFree;
+use windows::core::PWSTR;
 
 use crate::config::Config;
 
-const FRAME_TIMEOUT_MS: u32 = 1_000;
 const MAX_PIXEL_SAMPLES: usize = 8_000;
 const SMOOTHING: f32 = 0.20;
 
-/// Lists names reported by Windows without opening a video stream.
+/// Lists camera names through Media Foundation without opening a video stream.
 pub fn list_cameras() -> Result<Vec<String>, String> {
-    let provider = Provider::new().map_err(|error| error.to_string())?;
-    provider.list_devices().map_err(|error| error.to_string())
+    let session = MediaFoundationSession::start()?;
+    let devices = video_devices()?;
+    let names = devices
+        .iter()
+        .map(camera_name)
+        .collect::<Result<Vec<_>, _>>();
+    drop(session);
+    names
 }
 
 /// Starts the isolated ambient sampler and returns its configuration input and
@@ -118,30 +132,142 @@ fn sample_luminance_in_helper(camera_index: usize) -> Result<f32, String> {
 }
 
 pub fn sample_luminance(camera_index: usize) -> Result<f32, String> {
-    let camera_index =
-        i32::try_from(camera_index).map_err(|_| "índice de câmera inválido".to_owned())?;
-    let mut provider = Provider::with_device(camera_index).map_err(|error| error.to_string())?;
-
-    if let Err(error) = provider.set_property(
-        PropertyName::PixelFormatOutput,
-        PixelFormat::Bgra32 as u32 as f64,
-    ) {
-        tracing::debug!(%error, "câmera não aceitou BGRA; usando formato padrão");
+    let session = MediaFoundationSession::start()?;
+    let devices = video_devices()?;
+    let device = devices
+        .get(camera_index)
+        .ok_or_else(|| "índice de câmera indisponível".to_owned())?;
+    let source = unsafe {
+        device
+            .ActivateObject::<IMFMediaSource>()
+            .map_err(|error| error.to_string())?
+    };
+    let reader = unsafe {
+        MFCreateSourceReaderFromMediaSource(&source, None).map_err(|error| error.to_string())?
+    };
+    let media_type = unsafe { MFCreateMediaType().map_err(|error| error.to_string())? };
+    unsafe {
+        media_type
+            .SetGUID(&MF_MT_MAJOR_TYPE, &MFMediaType_Video)
+            .map_err(|error| error.to_string())?;
+        media_type
+            .SetGUID(&MF_MT_SUBTYPE, &MFVideoFormat_YUY2)
+            .map_err(|error| error.to_string())?;
+        reader
+            .SetCurrentMediaType(
+                MF_SOURCE_READER_FIRST_VIDEO_STREAM.0 as u32,
+                None,
+                &media_type,
+            )
+            .map_err(|error| error.to_string())?;
     }
-    provider.open().map_err(|error| error.to_string())?;
-    provider.start().map_err(|error| error.to_string())?;
-
-    let frame = provider
-        .grab_frame(FRAME_TIMEOUT_MS)
-        .map_err(|error| error.to_string())?
-        .ok_or_else(|| "a câmera não entregou um quadro a tempo".to_owned())?;
-    if frame.pixel_format() != PixelFormat::Bgra32 {
-        return Err("a câmera não forneceu um quadro BGRA compatível".to_owned());
+    let mut sample = None;
+    let mut stream_flags = 0u32;
+    unsafe {
+        reader
+            .ReadSample(
+                MF_SOURCE_READER_FIRST_VIDEO_STREAM.0 as u32,
+                0,
+                None,
+                Some(&mut stream_flags),
+                None,
+                Some(&mut sample),
+            )
+            .map_err(|error| error.to_string())?;
     }
-    frame_luminance(frame.data().map_err(|error| error.to_string())?)
-        .ok_or_else(|| "quadro de câmera vazio".to_owned())
+    let sample = sample.ok_or_else(|| "a câmera não entregou um quadro".to_owned())?;
+    let buffer = unsafe {
+        sample
+            .ConvertToContiguousBuffer()
+            .map_err(|error| error.to_string())?
+    };
+    let mut data = std::ptr::null_mut();
+    let mut max_length = 0;
+    let mut length = 0;
+    unsafe {
+        buffer
+            .Lock(&mut data, Some(&mut max_length), Some(&mut length))
+            .map_err(|error| error.to_string())?;
+    }
+    let luminance = unsafe { yuy2_luminance(std::slice::from_raw_parts(data, length as usize)) };
+    unsafe {
+        let _ = buffer.Unlock();
+    }
+    drop(session);
+    luminance.ok_or_else(|| "quadro de câmera vazio".to_owned())
 }
 
+struct MediaFoundationSession;
+
+impl MediaFoundationSession {
+    fn start() -> Result<Self, String> {
+        unsafe { MFStartup(MF_VERSION, MFSTARTUP_LITE) }.map_err(|error| error.to_string())?;
+        Ok(Self)
+    }
+}
+
+impl Drop for MediaFoundationSession {
+    fn drop(&mut self) {
+        unsafe {
+            let _ = MFShutdown();
+        }
+    }
+}
+
+fn video_devices() -> Result<Vec<IMFActivate>, String> {
+    let mut attributes = None;
+    unsafe { MFCreateAttributes(&mut attributes, 1) }.map_err(|error| error.to_string())?;
+    let attributes =
+        attributes.ok_or_else(|| "o Windows não criou os atributos da câmera".to_owned())?;
+    unsafe {
+        attributes
+            .SetGUID(
+                &MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE,
+                &MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_GUID,
+            )
+            .map_err(|error| error.to_string())?;
+    }
+    let mut raw_devices = std::ptr::null_mut();
+    let mut count = 0;
+    unsafe {
+        MFEnumDeviceSources(&attributes, &mut raw_devices, &mut count)
+            .map_err(|error| error.to_string())?;
+    }
+    let devices = unsafe {
+        std::slice::from_raw_parts(raw_devices, count as usize)
+            .iter()
+            .filter_map(Clone::clone)
+            .collect::<Vec<_>>()
+    };
+    unsafe {
+        CoTaskMemFree(Some(raw_devices.cast()));
+    }
+    if devices.is_empty() {
+        return Err("nenhuma câmera foi encontrada pelo Windows".to_owned());
+    }
+    Ok(devices)
+}
+
+fn camera_name(device: &IMFActivate) -> Result<String, String> {
+    let mut name = PWSTR::null();
+    let mut length = 0;
+    unsafe {
+        device
+            .GetAllocatedString(
+                &MF_DEVSOURCE_ATTRIBUTE_FRIENDLY_NAME,
+                &mut name,
+                &mut length,
+            )
+            .map_err(|error| error.to_string())?;
+    }
+    let value = unsafe { name.to_string() }.map_err(|error| error.to_string());
+    unsafe {
+        CoTaskMemFree(Some(name.0.cast()));
+    }
+    value
+}
+
+#[cfg(test)]
 fn frame_luminance(data: &[u8]) -> Option<f32> {
     let pixels = data.len() / 4;
     if pixels == 0 {
@@ -161,6 +287,21 @@ fn frame_luminance(data: &[u8]) -> Option<f32> {
     Some((total / count as f32 / 255.0).clamp(0.0, 1.0))
 }
 
+fn yuy2_luminance(data: &[u8]) -> Option<f32> {
+    let pixels = data.len() / 2;
+    if pixels == 0 {
+        return None;
+    }
+    let stride = (pixels / MAX_PIXEL_SAMPLES).max(1);
+    let mut total = 0.0;
+    let mut count = 0usize;
+    for pixel in data.chunks_exact(2).step_by(stride) {
+        total += pixel[0] as f32;
+        count += 1;
+    }
+    Some((total / count as f32 / 255.0).clamp(0.0, 1.0))
+}
+
 fn factor_for_luminance(luminance: f32) -> f32 {
     const MIN_FACTOR: f32 = 0.65;
     const MAX_FACTOR: f32 = 1.25;
@@ -172,7 +313,7 @@ fn factor_for_luminance(luminance: f32) -> f32 {
 
 #[cfg(test)]
 mod tests {
-    use super::{factor_for_luminance, frame_luminance};
+    use super::{factor_for_luminance, frame_luminance, yuy2_luminance};
 
     #[test]
     fn measures_bgra_luminance() {
@@ -180,6 +321,11 @@ mod tests {
         let white = [255, 255, 255, 255];
         assert_eq!(frame_luminance(&black), Some(0.0));
         assert_eq!(frame_luminance(&white), Some(1.0));
+    }
+
+    #[test]
+    fn measures_yuy2_luminance() {
+        assert_eq!(yuy2_luminance(&[0, 128, 255, 128]), Some(0.5));
     }
 
     #[test]
