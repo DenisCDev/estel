@@ -131,46 +131,32 @@ impl SettingsApp {
 }
 
 fn list_cameras_in_helper() -> Result<Vec<String>, String> {
-    let executable = std::env::current_exe()
-        .map_err(|error| format!("Não foi possível localizar o Estel ({error})."))?;
-    let mut child = Command::new(executable)
-        .arg("--list-cameras")
+    let output = Command::new("powershell.exe")
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            "Get-PnpDevice -Class Camera | Where-Object { $_.Status -eq 'OK' } | ForEach-Object { $_.FriendlyName }",
+        ])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .spawn()
+        .output()
         .map_err(|error| format!("Não foi possível consultar as câmeras ({error})."))?;
-    let deadline = Instant::now() + Duration::from_secs(5);
-
-    loop {
-        if child
-            .try_wait()
-            .map_err(|error| format!("Não foi possível consultar as câmeras ({error})."))?
-            .is_some()
-        {
-            let output = child
-                .wait_with_output()
-                .map_err(|error| format!("Não foi possível ler as câmeras ({error})."))?;
-            if !output.status.success() {
-                return Err("O driver da câmera não respondeu com segurança.".to_owned());
-            }
-            let output = String::from_utf8(output.stdout)
-                .map_err(|_| "O Windows retornou uma câmera com nome inválido.".to_owned())?;
-            return Ok(output
-                .lines()
-                .map(str::trim)
-                .filter(|name| !name.is_empty())
-                .map(str::to_owned)
-                .collect());
-        }
-        if Instant::now() >= deadline {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err(
-                "A busca por câmeras demorou mais de 5 segundos e foi cancelada.".to_owned(),
-            );
-        }
-        std::thread::sleep(Duration::from_millis(25));
+    if !output.status.success() {
+        return Err("O Windows não permitiu listar as câmeras conectadas.".to_owned());
     }
+    let output = String::from_utf8(output.stdout)
+        .map_err(|_| "O Windows retornou uma câmera com nome inválido.".to_owned())?;
+    let cameras = output
+        .lines()
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    if cameras.is_empty() {
+        return Err("Nenhuma câmera habilitada foi encontrada pelo Windows.".to_owned());
+    }
+    Ok(cameras)
 }
 
 impl eframe::App for SettingsApp {
@@ -194,6 +180,9 @@ impl eframe::App for SettingsApp {
         egui::CentralPanel::default()
             .frame(Frame::new().fill(PAPER).inner_margin(Margin::same(28)))
             .show(ctx, |ui| {
+                egui::ScrollArea::vertical()
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
                 ui.label(RichText::new("Estel").size(26.0).color(INK).strong());
                 ui.add_space(4.0);
                 ui.label(
@@ -395,6 +384,7 @@ impl eframe::App for SettingsApp {
                     ui.add_space(10.0);
                     ui.label(RichText::new(&self.status).size(12.0).color(AMBER));
                 }
+                    });
             });
     }
 
