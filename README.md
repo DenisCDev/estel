@@ -46,9 +46,9 @@ o aplicativo ainda não tem assinatura digital, o Windows pode mostrar o
 SmartScreen: clique em **Mais informações** e depois em **Executar assim mesmo**.
 
 Quem não quiser instalar pode baixar o
-[`estel-portable-x86_64.exe`](https://github.com/DenisCDev/estel/releases/latest/download/estel-portable-x86_64.exe)
-na mesma página. O portátil guarda as configurações no mesmo local da versão
-instalada.
+[`estel-portable-x86_64.zip`](https://github.com/DenisCDev/estel/releases/latest/download/estel-portable-x86_64.zip),
+extrair os dois arquivos e abrir `estel.exe`. O portátil guarda as configurações
+no mesmo local da versão instalada.
 
 Na bandeja:
 
@@ -83,6 +83,7 @@ versão Windows.
 |---|---|---|
 | Temperatura de cor | Reduzir luz azul-ciano no período noturno | Curva gradual em mired, com transições suaves |
 | Brilho | Evitar uma tela muito clara em um ambiente escuro | DDC no monitor ou camada escura no notebook |
+| Luz ambiente opcional | Aproximar o brilho da tela da claridade percebida no posto de trabalho | A câmera escolhida mede a média de um quadro, descarta-o localmente e entrega apenas um fator de brilho suavizado |
 | Estabilidade visual | Evitar mudanças bruscas e cintilação criada pelo aplicativo | Sem piscar a interface nem simular PWM por software |
 | Som opcional no Windows | Criar um fundo constante sem início ou fim abrupto | Ruído rosa ou marrom, transição de pelo menos 4 s e limite de volume |
 
@@ -112,6 +113,21 @@ Gama do Windows 11 recusa rampas agressivas em silêncio. Estel não tenta escur
 
 Não tem prompt, não tem conta, não sai dado da máquina.
 
+### Luz ambiente por câmera (Windows)
+
+O ajuste por luz ambiente é desativado por padrão. Ao ser ligado, a pessoa
+escolhe qual webcam será usada — por exemplo, a interna ou uma Logitech. O
+Estel abre a câmera apenas para obter um quadro, calcula a luminância média de
+até 8.000 pixels, descarta o quadro em memória e fecha o acesso. A leitura
+padrão acontece a cada 30 segundos, tem timeout de 1 segundo e o resultado é
+suavizado antes de alterar o brilho.
+
+Não há gravação, visualização, rede, identificação de pessoas, rosto, olhos,
+presença ou estado emocional. Uma webcam comum não é um luxímetro: exposição
+automática e posição da câmera mudam a leitura. Por isso o recurso trabalha
+com um sinal relativo e deixa a pessoa definir os limites para ambiente escuro
+e claro. Desativar a opção devolve o fator para 100% e não acessa a câmera.
+
 ---
 
 ## Limites honestos
@@ -119,6 +135,9 @@ Não tem prompt, não tem conta, não sai dado da máquina.
 - Efeitos modestos. O maior ganho é **remover** o que ativa, não adicionar algo mágico.
 - PWM de OLED (60–240 Hz) o software não muda — só evita o range de baixíssimo brilho.
 - Variabilidade individual é alta. Tudo importante cabe na janela de configurações.
+- A leitura ambiental é uma ajuda ergonômica, não um diagnóstico de fadiga,
+  ansiedade ou saúde ocular. Pausas, iluminação difusa e redução de reflexos
+  continuam sendo importantes.
 - **Não é tratamento.** Não substitui medicação nem acompanhamento clínico.
 
 ---
@@ -154,3 +173,10 @@ Detalhes de API Win32: `docs/VERIFIED-DECISIONS.md`.
 - Reutimann et al. *Royal Society Open Science* 10:230432, 2023 — cor e excitação em RV
 - IEEE Std 1789-2015 — modulação de luz
 - Blumenthal TD & Berg WK. *Psychophysiology*, 1986 — rise time e sobressalto
+- Sheedy JE et al. *Ergonomics* 48(9):1114–1128, 2005,
+  [doi:10.1080/00140130500208414](https://doi.org/10.1080/00140130500208414)
+  — luminância ao redor da tela e adaptação visual
+- [ISO/TR 9241-610:2022](https://www.iso.org/obp/ui/en/#iso:std:iso:tr:9241:-610:ed-1:v1:en)
+  — impacto da luz e da iluminação em sistemas interativos
+- [OSHA — iluminação em estações de computador](https://www.osha.gov/etools/computer-workstations/workstation-environment)
+  — reflexos, contraste e fadiga visual

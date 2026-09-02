@@ -77,6 +77,17 @@ pub struct Config {
     /// "alta" = full (default), "media" = 60 %, "suave" = 30 %.
     pub intensity: Intensity,
 
+    /// Enable webcam-driven ambient brightness adaptation.
+    pub ambient_enabled: bool,
+    /// Index in the webcam list used to capture ambient light.
+    pub ambient_camera_index: usize,
+    /// Interval between samples in seconds.
+    pub ambient_sample_interval_seconds: u64,
+    /// Lowest brightness multiplier when ambient light is low.
+    pub ambient_brightness_min: f32,
+    /// Highest brightness multiplier when ambient light is high.
+    pub ambient_brightness_max: f32,
+
     /// The daily curve.
     pub schedule: Schedule,
 }
@@ -95,6 +106,11 @@ impl Default for Config {
             display_enabled: true,
             noise_enabled: false,
             intensity: Intensity::Alta,
+            ambient_enabled: false,
+            ambient_camera_index: 0,
+            ambient_sample_interval_seconds: 30,
+            ambient_brightness_min: 0.65,
+            ambient_brightness_max: 1.00,
             schedule: default_schedule(),
         }
     }
@@ -227,6 +243,15 @@ impl Config {
         self.gamma_warm_floor_k = self.gamma_warm_floor_k.clamp(3000.0, 4500.0);
         self.tick_seconds = self.tick_seconds.clamp(5, 120);
         self.max_volume = self.max_volume.clamp(0.0, 0.70);
+        self.ambient_sample_interval_seconds = self.ambient_sample_interval_seconds.clamp(2, 120);
+        self.ambient_brightness_min = self.ambient_brightness_min.clamp(0.35, 1.30);
+        self.ambient_brightness_max = self.ambient_brightness_max.clamp(0.35, 1.30);
+        if self.ambient_brightness_max < self.ambient_brightness_min {
+            std::mem::swap(
+                &mut self.ambient_brightness_min,
+                &mut self.ambient_brightness_max,
+            );
+        }
         if self.schedule.keypoints.is_empty() {
             self.schedule = default_schedule();
         }
@@ -351,5 +376,22 @@ noise = "pink"
 "#;
         let cfg: Config = toml::from_str(text).expect("legacy alias");
         assert!((cfg.schedule.keypoints[0].noise_gain - 0.15).abs() < 1e-6);
+    }
+
+    #[test]
+    fn ambient_values_are_sanitized() {
+        let mut cfg = Config {
+            ambient_enabled: true,
+            ambient_sample_interval_seconds: 0,
+            ambient_brightness_min: 2.0,
+            ambient_brightness_max: 0.0,
+            ambient_camera_index: 10,
+            ..Config::default()
+        };
+        cfg.sanitize();
+        assert!(cfg.ambient_sample_interval_seconds >= 2);
+        assert!(cfg.ambient_brightness_min <= cfg.ambient_brightness_max);
+        assert!((cfg.ambient_brightness_min - 0.35).abs() < f32::EPSILON);
+        assert!((cfg.ambient_brightness_max - 1.30).abs() < f32::EPSILON);
     }
 }

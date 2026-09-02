@@ -3,6 +3,8 @@
 //! Open-loop by time and location: no biometrics, no prompts, no data
 //! collection. Adjunctive comfort, not treatment.
 
+#[cfg(windows)]
+pub mod ambient;
 pub mod audio;
 #[cfg(windows)]
 pub mod brightness;

@@ -55,3 +55,16 @@ Regras de produto que prevalecem sobre o resto:
 - `directories` 6 + `serde` + `toml` 1.1. TOML inválido vira
   `config.toml.invalid`; memória cai no padrão. `sanitize()` clampa volume,
   tick, lat/lon e keypoints vazios.
+
+## Luz ambiente por câmera
+
+- `ccap-rs` 1.6, importada como `ccap`, usa DirectShow no Windows e permite
+  enumerar dispositivos e capturar um quadro com timeout. A implementação pede
+  BGRA para poder reduzir o quadro a luminância média sem salvar pixels.
+- A captura roda em thread dedicada. Com a opção desligada, a thread espera
+  configuração e não abre câmera. Com ela ligada, abre, lê no máximo um quadro
+  em até 1 s, calcula no máximo 8.000 amostras, descarta o quadro e só envia um
+  `f32` de fator de brilho ao loop principal.
+- O fator é limitado pela configuração da pessoa e suavizado por EWMA (20%).
+  A câmera não é usada como luxímetro calibrado, biometria, detector de rosto,
+  olhos, presença, emoção ou atenção.

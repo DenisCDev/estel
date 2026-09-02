@@ -5,6 +5,7 @@ use std::time::{Duration, Instant};
 
 use eframe::egui::{self, Color32, CornerRadius, Frame, Margin, RichText, Stroke, Vec2};
 
+use crate::ambient;
 use crate::config::{Config, Intensity};
 
 const PAPER: Color32 = Color32::from_rgb(250, 250, 248);
@@ -17,8 +18,8 @@ pub fn run(initial: Config, tx: Sender<Config>) -> eframe::Result {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("Estel")
-            .with_inner_size([420.0, 620.0])
-            .with_min_inner_size([380.0, 520.0])
+            .with_inner_size([420.0, 740.0])
+            .with_min_inner_size([380.0, 600.0])
             .with_resizable(true)
             .with_maximize_button(false),
         persist_window: false,
@@ -62,12 +63,18 @@ struct SettingsApp {
     last_edit: Instant,
     status: String,
     save_error: Option<String>,
+    camera_names: Vec<String>,
+    camera_error: Option<String>,
 }
 
 impl SettingsApp {
     fn new(cfg: Config, tx: Sender<Config>) -> Self {
         let (wake_h, wake_m) = split_hhmm(&cfg.wake);
         let (bed_h, bed_m) = split_hhmm(&cfg.bed);
+        let (camera_names, camera_error) = match ambient::list_cameras() {
+            Ok(cameras) => (cameras, None),
+            Err(error) => (Vec::new(), Some(error)),
+        };
         SettingsApp {
             cfg,
             tx,
@@ -79,6 +86,8 @@ impl SettingsApp {
             last_edit: Instant::now(),
             status: String::new(),
             save_error: None,
+            camera_names,
+            camera_error,
         }
     }
 
@@ -207,6 +216,99 @@ impl eframe::App for SettingsApp {
                         .size(12.0)
                         .color(MUTED),
                 );
+
+                ui.add_space(18.0);
+                section(ui, "LUZ AMBIENTE");
+                if ui
+                    .checkbox(
+                        &mut self.cfg.ambient_enabled,
+                        "Ajustar brilho pela luz do ambiente",
+                    )
+                    .changed()
+                {
+                    self.touch();
+                }
+                ui.label(
+                    RichText::new(
+                        "Opcional e local: o Estel mede a claridade de um quadro e o descarta. Não grava, transmite ou analisa pessoas.",
+                    )
+                    .size(12.0)
+                    .color(MUTED),
+                );
+                if self.cfg.ambient_enabled {
+                    ui.add_space(6.0);
+                    ui.label(RichText::new("Câmera").size(13.0).color(INK));
+                    let selected = self
+                        .camera_names
+                        .get(self.cfg.ambient_camera_index)
+                        .map(String::as_str)
+                        .unwrap_or("Dispositivo salvo indisponível");
+                    let mut camera_changed = false;
+                    egui::ComboBox::from_id_salt("ambient-camera")
+                        .selected_text(selected)
+                        .show_ui(ui, |ui| {
+                            for (index, name) in self.camera_names.iter().enumerate() {
+                                camera_changed |= ui
+                                    .selectable_value(
+                                        &mut self.cfg.ambient_camera_index,
+                                        index,
+                                        name,
+                                    )
+                                    .changed();
+                            }
+                        });
+                    if camera_changed {
+                        self.touch();
+                    }
+                    if self.camera_names.is_empty() {
+                        let message = self.camera_error.as_deref().unwrap_or(
+                            "Nenhuma câmera foi encontrada pelo Windows.",
+                        );
+                        ui.label(
+                            RichText::new(message)
+                                .size(12.0)
+                                .color(Color32::from_rgb(160, 40, 30)),
+                        );
+                    }
+                    ui.add_space(4.0);
+                    if ui
+                        .add(
+                            egui::Slider::new(
+                                &mut self.cfg.ambient_sample_interval_seconds,
+                                10..=120,
+                            )
+                            .text("Leitura")
+                            .suffix(" s"),
+                        )
+                        .changed()
+                    {
+                        self.touch();
+                    }
+                    if ui
+                        .add(
+                            egui::Slider::new(
+                                &mut self.cfg.ambient_brightness_min,
+                                0.35..=1.0,
+                            )
+                            .text("Ambiente escuro"),
+                        )
+                        .changed()
+                    {
+                        self.touch();
+                    }
+                    if ui
+                        .add(
+                            egui::Slider::new(
+                                &mut self.cfg.ambient_brightness_max,
+                                1.0..=1.25,
+                            )
+                            .text("Ambiente claro"),
+                        )
+                        .changed()
+                    {
+                        self.touch();
+                    }
+                }
 
                 ui.add_space(24.0);
                 ui.separator();

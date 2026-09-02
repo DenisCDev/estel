@@ -23,6 +23,12 @@ $destDir = Join-Path $env:LOCALAPPDATA "Estel"
 New-Item -ItemType Directory -Force -Path $destDir | Out-Null
 Copy-Item -Force $src (Join-Path $destDir "estel.exe")
 
+$cppRuntime = Join-Path (Split-Path (Get-Command g++).Source) "libstdc++-6.dll"
+if (-not (Test-Path $cppRuntime)) {
+    throw "libstdc++-6.dll não foi encontrada ao lado do compilador C++."
+}
+Copy-Item -Force $cppRuntime (Join-Path $destDir "libstdc++-6.dll")
+
 Write-Host "Instalado em $destDir"
 Write-Host "Iniciando. O ícone fica na bandeja do sistema."
 Start-Process (Join-Path $destDir "estel.exe")

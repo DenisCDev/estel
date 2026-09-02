@@ -15,6 +15,7 @@ use windows::Win32::System::Threading::{
 use windows::Win32::UI::WindowsAndMessaging::{MB_ICONERROR, MB_OK, MessageBoxW};
 use windows::core::w;
 
+use estel::ambient;
 use estel::audio::Audio;
 use estel::brightness;
 use estel::config::Config;
@@ -83,6 +84,7 @@ fn main() -> anyhow::Result<()> {
     }
 
     let (cfg_tx, cfg_rx) = mpsc::channel::<Config>();
+    let (ambient_cfg_tx, ambient_factor_rx) = ambient::start(cfg.clone());
     let settings_open = Arc::new(AtomicBool::new(false));
     if open_settings_on_start {
         open_settings(cfg.clone(), cfg_tx.clone(), settings_open.clone());
@@ -100,12 +102,19 @@ fn main() -> anyhow::Result<()> {
 
     let mut paused = false;
     let mut preview_until: Option<Instant> = None;
+    let mut ambient_factor = 1.0;
 
     while running.load(Ordering::SeqCst) {
         while let Ok(incoming) = cfg_rx.try_recv() {
             cfg = incoming;
             tray.set_intensity(cfg.intensity);
             tray.set_noise(cfg.noise_enabled);
+            if ambient_cfg_tx.send(cfg.clone()).is_err() {
+                tracing::error!("sensor de luz ambiente encerrou inesperadamente");
+            }
+        }
+        while let Ok(factor) = ambient_factor_rx.try_recv() {
+            ambient_factor = factor;
         }
 
         let now = Local::now();
@@ -133,6 +142,8 @@ fn main() -> anyhow::Result<()> {
                 noise_gain: 1.0,
                 noise: Some(NoiseColor::Pink),
             };
+        } else if cfg.ambient_enabled {
+            target.brightness = (target.brightness * ambient_factor).clamp(0.0, 1.0);
         }
 
         if paused && !preview {
@@ -274,6 +285,14 @@ fn main() -> anyhow::Result<()> {
                 cfg = incoming;
                 tray.set_intensity(cfg.intensity);
                 tray.set_noise(cfg.noise_enabled);
+                if ambient_cfg_tx.send(cfg.clone()).is_err() {
+                    tracing::error!("sensor de luz ambiente encerrou inesperadamente");
+                }
+                kick = true;
+            }
+
+            while let Ok(factor) = ambient_factor_rx.try_recv() {
+                ambient_factor = factor;
                 kick = true;
             }
 

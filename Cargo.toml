@@ -1,6 +1,6 @@
 [package]
 name = "estel"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 description = "Aplicativo para ajustar cor e brilho no Windows, com som ambiente opcional."
 license = "MIT"
@@ -27,6 +27,7 @@ webbrowser = "1.2.4"
 
 [target.'cfg(windows)'.dependencies]
 auto-launch = "0.6"
+ccap = { package = "ccap-rs", version = "1.6.0" }
 eframe = { version = "0.32", default-features = false, features = ["glow", "default_fonts"] }
 muda = "0.19"
 tray-icon = "0.24"
