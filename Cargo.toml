@@ -29,6 +29,7 @@ webbrowser = "1.2.4"
 auto-launch = "0.6"
 ccap = { package = "ccap-rs", version = "1.6.0" }
 eframe = { version = "0.32", default-features = false, features = ["glow", "default_fonts"] }
+winit = "0.30"
 muda = "0.19"
 tray-icon = "0.24"
 windows = { version = "0.62.2", features = [

@@ -4,6 +4,8 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::{Duration, Instant};
 
 use eframe::egui::{self, Color32, CornerRadius, Frame, Margin, RichText, Stroke, Vec2};
+#[cfg(windows)]
+use winit::platform::windows::EventLoopBuilderExtWindows;
 
 use crate::ambient;
 use crate::config::{Config, Intensity};
@@ -22,6 +24,10 @@ pub fn run(initial: Config, tx: Sender<Config>) -> eframe::Result {
             .with_min_inner_size([380.0, 600.0])
             .with_resizable(true)
             .with_maximize_button(false),
+        event_loop_builder: Some(Box::new(|builder| {
+            #[cfg(windows)]
+            builder.with_any_thread(true);
+        })),
         persist_window: false,
         centered: true,
         ..Default::default()
