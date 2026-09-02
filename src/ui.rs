@@ -1,6 +1,6 @@
 //! Small settings window. Light, sparse, no animation.
 
-use std::sync::mpsc::Sender;
+use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::{Duration, Instant};
 
 use eframe::egui::{self, Color32, CornerRadius, Frame, Margin, RichText, Stroke, Vec2};
@@ -65,16 +65,20 @@ struct SettingsApp {
     save_error: Option<String>,
     camera_names: Vec<String>,
     camera_error: Option<String>,
+    camera_scan: Receiver<Result<Vec<String>, String>>,
 }
 
 impl SettingsApp {
     fn new(cfg: Config, tx: Sender<Config>) -> Self {
         let (wake_h, wake_m) = split_hhmm(&cfg.wake);
         let (bed_h, bed_m) = split_hhmm(&cfg.bed);
-        let (camera_names, camera_error) = match ambient::list_cameras() {
-            Ok(cameras) => (cameras, None),
-            Err(error) => (Vec::new(), Some(error)),
-        };
+        let (camera_tx, camera_scan) = mpsc::channel();
+        std::thread::spawn(move || {
+            let result = std::panic::catch_unwind(ambient::list_cameras)
+                .map_err(|_| "O driver da câmera falhou ao listar os dispositivos.".to_owned())
+                .and_then(|result| result.map_err(|error| error.to_string()));
+            let _ = camera_tx.send(result);
+        });
         SettingsApp {
             cfg,
             tx,
@@ -86,8 +90,9 @@ impl SettingsApp {
             last_edit: Instant::now(),
             status: String::new(),
             save_error: None,
-            camera_names,
-            camera_error,
+            camera_names: Vec::new(),
+            camera_error: None,
+            camera_scan,
         }
     }
 
@@ -123,6 +128,15 @@ impl SettingsApp {
 
 impl eframe::App for SettingsApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        if let Ok(result) = self.camera_scan.try_recv() {
+            match result {
+                Ok(cameras) => {
+                    self.camera_names = cameras;
+                    self.camera_error = None;
+                }
+                Err(error) => self.camera_error = Some(error),
+            }
+        }
         if self.dirty && self.last_edit.elapsed() > Duration::from_millis(400) {
             self.flush();
         }
