@@ -51,7 +51,7 @@ fn run(mut config: Config, config_rx: Receiver<Config>, factor_tx: Sender<f32>) 
 
         match sample_luminance_in_helper(config.ambient_camera_index) {
             Ok(luminance) => {
-                let measured = factor_for_luminance(luminance, &config);
+                let measured = factor_for_luminance(luminance);
                 smoothed += (measured - smoothed) * SMOOTHING;
                 if factor_tx.send(smoothed).is_err() {
                     return;
@@ -161,16 +161,18 @@ fn frame_luminance(data: &[u8]) -> Option<f32> {
     Some((total / count as f32 / 255.0).clamp(0.0, 1.0))
 }
 
-fn factor_for_luminance(luminance: f32, config: &Config) -> f32 {
+fn factor_for_luminance(luminance: f32) -> f32 {
+    const MIN_FACTOR: f32 = 0.65;
+    const MAX_FACTOR: f32 = 1.25;
+
     let normalized = luminance.clamp(0.0, 1.0);
-    config.ambient_brightness_min
-        + (config.ambient_brightness_max - config.ambient_brightness_min) * normalized
+    let response = normalized.powf(0.55);
+    MIN_FACTOR + (MAX_FACTOR - MIN_FACTOR) * response
 }
 
 #[cfg(test)]
 mod tests {
     use super::{factor_for_luminance, frame_luminance};
-    use crate::config::Config;
 
     #[test]
     fn measures_bgra_luminance() {
@@ -181,13 +183,10 @@ mod tests {
     }
 
     #[test]
-    fn maps_dark_and_bright_rooms_to_user_limits() {
-        let config = Config {
-            ambient_brightness_min: 0.70,
-            ambient_brightness_max: 1.10,
-            ..Config::default()
-        };
-        assert!((factor_for_luminance(0.0, &config) - 0.70).abs() < f32::EPSILON);
-        assert!((factor_for_luminance(1.0, &config) - 1.10).abs() < f32::EPSILON);
+    fn maps_dark_and_very_bright_rooms_continuously() {
+        assert!((factor_for_luminance(0.0) - 0.65).abs() < f32::EPSILON);
+        assert!((factor_for_luminance(1.0) - 1.25).abs() < f32::EPSILON);
+        assert!(factor_for_luminance(0.25) < factor_for_luminance(0.50));
+        assert!(factor_for_luminance(0.50) < factor_for_luminance(0.75));
     }
 }

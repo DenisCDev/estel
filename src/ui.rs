@@ -340,30 +340,13 @@ impl eframe::App for SettingsApp {
                     {
                         self.touch();
                     }
-                    if ui
-                        .add(
-                            egui::Slider::new(
-                                &mut self.cfg.ambient_brightness_min,
-                                0.35..=1.0,
-                            )
-                            .text("Ambiente escuro"),
+                    ui.label(
+                        RichText::new(
+                            "Ajuste contínuo: reduz suavemente no escuro e reforça o brilho em ambientes muito claros.",
                         )
-                        .changed()
-                    {
-                        self.touch();
-                    }
-                    if ui
-                        .add(
-                            egui::Slider::new(
-                                &mut self.cfg.ambient_brightness_max,
-                                1.0..=1.25,
-                            )
-                            .text("Ambiente claro"),
-                        )
-                        .changed()
-                    {
-                        self.touch();
-                    }
+                        .size(12.0)
+                        .color(MUTED),
+                    );
                 }
 
                 ui.add_space(24.0);
