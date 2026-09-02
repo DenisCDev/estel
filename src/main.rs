@@ -29,6 +29,42 @@ use estel::tray::{Autostart, Tray, TrayAction};
 fn main() -> anyhow::Result<()> {
     init_log();
     let open_settings_on_start = std::env::args_os().any(|arg| arg == "--settings");
+    if let Some(camera_index) = std::env::args()
+        .skip_while(|arg| arg != "--sample-ambient")
+        .nth(1)
+    {
+        let camera_index = camera_index
+            .parse::<usize>()
+            .map_err(|_| anyhow::anyhow!("índice de câmera inválido"))?;
+        unsafe {
+            let _ = windows::Win32::System::Com::CoInitializeEx(
+                None,
+                windows::Win32::System::Com::COINIT_APARTMENTTHREADED,
+            );
+        }
+        println!(
+            "{}",
+            ambient::sample_luminance(camera_index).map_err(anyhow::Error::msg)?
+        );
+        return Ok(());
+    }
+    if std::env::args_os().any(|arg| arg == "--list-cameras") {
+        unsafe {
+            let _ = windows::Win32::System::Com::CoInitializeEx(
+                None,
+                windows::Win32::System::Com::COINIT_APARTMENTTHREADED,
+            );
+        }
+        for camera in ambient::list_cameras().map_err(anyhow::Error::msg)? {
+            println!("{camera}");
+        }
+        return Ok(());
+    }
+    if std::env::args_os().any(|arg| arg == "--settings-window") {
+        let (tx, _rx) = mpsc::channel();
+        return estel::ui::run(Config::load_or_default(), tx)
+            .map_err(|error| anyhow::anyhow!(error.to_string()));
+    }
 
     let (settings_event, _instance_mutex) = unsafe {
         let event = CreateEventW(None, false, false, w!("Local\\EstelOpenSettings"))?;
@@ -330,20 +366,23 @@ fn persist(cfg: &Config) {
     }
 }
 
-fn open_settings(cfg: Config, tx: mpsc::Sender<Config>, flag: Arc<AtomicBool>) {
+fn open_settings(_cfg: Config, tx: mpsc::Sender<Config>, flag: Arc<AtomicBool>) {
     if flag.swap(true, Ordering::SeqCst) {
         return;
     }
     std::thread::spawn(move || {
-        unsafe {
-            let _ = windows::Win32::System::Com::CoInitializeEx(
-                None,
-                windows::Win32::System::Com::COINIT_APARTMENTTHREADED,
-            );
+        let result = std::env::current_exe()
+            .and_then(|executable| {
+                std::process::Command::new(executable)
+                    .arg("--settings-window")
+                    .spawn()
+            })
+            .and_then(|mut child| child.wait());
+        if let Err(error) = result {
+            tracing::error!("janela de configurações: {error}");
+            show_error(w!("Não foi possível abrir as configurações."));
         }
-        if let Err(e) = estel::ui::run(cfg, tx) {
-            tracing::error!("janela de configurações: {e}");
-        }
+        let _ = tx.send(Config::load_or_default());
         flag.store(false, Ordering::SeqCst);
     });
 }

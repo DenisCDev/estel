@@ -1,8 +1,9 @@
 //! Local, low-frequency ambient-light sampling through an opt-in camera.
 
+use std::process::{Command, Stdio};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use ccap::{PixelFormat, PropertyName, Provider};
 
@@ -48,7 +49,7 @@ fn run(mut config: Config, config_rx: Receiver<Config>, factor_tx: Sender<f32>) 
             continue;
         }
 
-        match sample_luminance(config.ambient_camera_index) {
+        match sample_luminance_in_helper(config.ambient_camera_index) {
             Ok(luminance) => {
                 let measured = factor_for_luminance(luminance, &config);
                 smoothed += (measured - smoothed) * SMOOTHING;
@@ -73,7 +74,50 @@ fn run(mut config: Config, config_rx: Receiver<Config>, factor_tx: Sender<f32>) 
     }
 }
 
-fn sample_luminance(camera_index: usize) -> Result<f32, String> {
+fn sample_luminance_in_helper(camera_index: usize) -> Result<f32, String> {
+    let executable = std::env::current_exe()
+        .map_err(|error| format!("não foi possível localizar o Estel ({error})"))?;
+    let mut child = Command::new(executable)
+        .arg("--sample-ambient")
+        .arg(camera_index.to_string())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| format!("não foi possível iniciar a leitura da câmera ({error})"))?;
+    let deadline = Instant::now() + Duration::from_secs(5);
+
+    loop {
+        if child
+            .try_wait()
+            .map_err(|error| format!("não foi possível ler a câmera ({error})"))?
+            .is_some()
+        {
+            let output = child
+                .wait_with_output()
+                .map_err(|error| format!("não foi possível ler a câmera ({error})"))?;
+            if !output.status.success() {
+                return Err("o driver da câmera não respondeu com segurança".to_owned());
+            }
+            let output = String::from_utf8(output.stdout)
+                .map_err(|_| "o Windows retornou uma leitura de câmera inválida".to_owned())?;
+            return output
+                .trim()
+                .parse::<f32>()
+                .map(|value| value.clamp(0.0, 1.0))
+                .map_err(|_| "a câmera retornou uma medida de luz inválida".to_owned());
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(
+                "a leitura da câmera demorou mais de 5 segundos e foi cancelada".to_owned(),
+            );
+        }
+        thread::sleep(Duration::from_millis(25));
+    }
+}
+
+pub fn sample_luminance(camera_index: usize) -> Result<f32, String> {
     let camera_index =
         i32::try_from(camera_index).map_err(|_| "índice de câmera inválido".to_owned())?;
     let mut provider = Provider::with_device(camera_index).map_err(|error| error.to_string())?;

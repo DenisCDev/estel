@@ -1,5 +1,6 @@
 //! Small settings window. Light, sparse, no animation.
 
+use std::process::{Command, Stdio};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::{Duration, Instant};
 
@@ -7,7 +8,6 @@ use eframe::egui::{self, Color32, CornerRadius, Frame, Margin, RichText, Stroke,
 #[cfg(windows)]
 use winit::platform::windows::EventLoopBuilderExtWindows;
 
-use crate::ambient;
 use crate::config::{Config, Intensity};
 
 const PAPER: Color32 = Color32::from_rgb(250, 250, 248);
@@ -80,9 +80,7 @@ impl SettingsApp {
         let (bed_h, bed_m) = split_hhmm(&cfg.bed);
         let (camera_tx, camera_scan) = mpsc::channel();
         std::thread::spawn(move || {
-            let result = std::panic::catch_unwind(ambient::list_cameras)
-                .map_err(|_| "O driver da câmera falhou ao listar os dispositivos.".to_owned())
-                .and_then(|result| result.map_err(|error| error.to_string()));
+            let result = list_cameras_in_helper();
             let _ = camera_tx.send(result);
         });
         SettingsApp {
@@ -129,6 +127,49 @@ impl SettingsApp {
                 ));
             }
         }
+    }
+}
+
+fn list_cameras_in_helper() -> Result<Vec<String>, String> {
+    let executable = std::env::current_exe()
+        .map_err(|error| format!("Não foi possível localizar o Estel ({error})."))?;
+    let mut child = Command::new(executable)
+        .arg("--list-cameras")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| format!("Não foi possível consultar as câmeras ({error})."))?;
+    let deadline = Instant::now() + Duration::from_secs(5);
+
+    loop {
+        if child
+            .try_wait()
+            .map_err(|error| format!("Não foi possível consultar as câmeras ({error})."))?
+            .is_some()
+        {
+            let output = child
+                .wait_with_output()
+                .map_err(|error| format!("Não foi possível ler as câmeras ({error})."))?;
+            if !output.status.success() {
+                return Err("O driver da câmera não respondeu com segurança.".to_owned());
+            }
+            let output = String::from_utf8(output.stdout)
+                .map_err(|_| "O Windows retornou uma câmera com nome inválido.".to_owned())?;
+            return Ok(output
+                .lines()
+                .map(str::trim)
+                .filter(|name| !name.is_empty())
+                .map(str::to_owned)
+                .collect());
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(
+                "A busca por câmeras demorou mais de 5 segundos e foi cancelada.".to_owned(),
+            );
+        }
+        std::thread::sleep(Duration::from_millis(25));
     }
 }
 
@@ -239,13 +280,19 @@ impl eframe::App for SettingsApp {
 
                 ui.add_space(18.0);
                 section(ui, "LUZ AMBIENTE");
-                if ui
-                    .checkbox(
-                        &mut self.cfg.ambient_enabled,
-                        "Ajustar brilho pela luz do ambiente",
-                    )
-                    .changed()
-                {
+                let ambient_changed = ui
+                    .scope(|ui| {
+                        ui.style_mut().visuals.widgets.inactive.bg_fill = PAPER;
+                        ui.style_mut().visuals.widgets.inactive.bg_stroke =
+                            Stroke::new(1.5_f32, INK);
+                        ui.checkbox(
+                            &mut self.cfg.ambient_enabled,
+                            "Ajustar brilho pela luz do ambiente",
+                        )
+                        .changed()
+                    })
+                    .inner;
+                if ambient_changed {
                     self.touch();
                 }
                 ui.label(
