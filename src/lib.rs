@@ -23,6 +23,8 @@ pub mod target;
 pub mod tray;
 #[cfg(windows)]
 pub mod ui;
+#[cfg(windows)]
+pub mod update;
 pub mod weather;
 
 pub use color::{GammaRamp, build_gamma_ramp, cct_to_rgb, clamp_ramp_to_driver, identity_ramp};

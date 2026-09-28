@@ -1,6 +1,6 @@
 [package]
 name = "estel"
-version = "0.2.3"
+version = "0.2.4"
 edition = "2024"
 description = "Aplicativo para ajustar cor e brilho no Windows, com som ambiente opcional."
 license = "MIT"
@@ -30,6 +30,7 @@ url = "2.5"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 rodio = { version = "0.22", default-features = false, features = ["playback", "noise"] }
+ring = "0.17.14"
 webbrowser = "1.2.4"
 
 [target.'cfg(windows)'.dependencies]

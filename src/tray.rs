@@ -26,6 +26,7 @@ pub struct Tray {
     preview_id: MenuId,
     settings_id: MenuId,
     updates_id: MenuId,
+    updates: MenuItem,
     quit_id: MenuId,
     intensity_alta: CheckMenuItem,
     intensity_media: CheckMenuItem,
@@ -107,6 +108,7 @@ impl Tray {
             preview_id,
             settings_id,
             updates_id,
+            updates,
             quit_id,
             intensity_alta,
             intensity_media,
@@ -147,6 +149,11 @@ impl Tray {
 
     pub fn set_noise(&self, enabled: bool) {
         self.noise.set_checked(enabled);
+    }
+
+    pub fn set_update_available(&self, version: &str) {
+        self.updates
+            .set_text(format!("Atualização {version} disponível…"));
     }
 
     pub fn poll(&self) -> Option<TrayAction> {

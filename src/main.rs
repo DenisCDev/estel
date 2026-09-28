@@ -1,7 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use std::sync::{
-    Arc,
+    Arc, Mutex,
     atomic::{AtomicBool, Ordering},
     mpsc,
 };
@@ -25,7 +25,10 @@ use estel::schedule::DayContext;
 use estel::session;
 use estel::target::{NoiseColor, Target};
 use estel::tray::{Autostart, Tray, TrayAction};
+use estel::update;
 use estel::weather::{self, Weather, WeatherPhase};
+
+static SCREEN_LOCK: Mutex<()> = Mutex::new(());
 
 fn main() -> anyhow::Result<()> {
     init_log();
@@ -100,28 +103,43 @@ fn main() -> anyhow::Result<()> {
         cfg.noise_enabled,
         cfg.ambient_enabled,
     )?;
-    tray.set_weather_status(if cfg.weather_enabled {
+    let (update_tx, update_rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = update_tx.send(update::check_latest());
+    });
+    tray.set_weather_status(if cfg.weather_enabled && !cfg.preserve_colors() {
         "Clima: consultando..."
     } else {
         "Clima: desligado"
     });
-    if cfg.weather_enabled {
+    if cfg.weather_enabled && !cfg.preserve_colors() {
         weather::publish_status(&cfg, WeatherPhase::Consulting);
+    }
+    if cfg.preserve_colors() {
+        tray.set_ambient_status("Luz ambiente: pausada para preservar cores");
     }
     let overlay_hwnd = overlay::create()?;
 
-    let _gamma_ok = display::init();
-    let ddc_ok = if cfg.display_enabled {
-        brightness::init()
-    } else {
-        false
-    };
-    session::mark_dirty();
+    let mut screen_initialized = false;
+    if session::is_dirty() || (cfg.display_enabled && !cfg.preserve_colors()) {
+        let _ = display::init();
+        let _ = brightness::init();
+        screen_initialized = true;
+        if cfg.display_enabled && !cfg.preserve_colors() {
+            session::mark_dirty();
+        } else {
+            park_screen();
+        }
+    }
 
+    let running = Arc::new(AtomicBool::new(true));
+    let panic_running = running.clone();
     let orig_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
-        display::restore();
-        brightness::restore();
+        panic_running.store(false, Ordering::SeqCst);
+        if let Ok(_screen_guard) = SCREEN_LOCK.try_lock() {
+            restore_screen_unlocked();
+        }
         orig_hook(info);
     }));
 
@@ -135,12 +153,9 @@ fn main() -> anyhow::Result<()> {
         open_settings(cfg.clone(), cfg_tx.clone(), settings_open.clone());
     }
 
-    let running = Arc::new(AtomicBool::new(true));
     {
         let running = running.clone();
         ctrlc::set_handler(move || {
-            display::restore();
-            brightness::restore();
             running.store(false, Ordering::SeqCst);
         })?;
     }
@@ -148,12 +163,23 @@ fn main() -> anyhow::Result<()> {
     let mut paused = false;
     let mut preview_until: Option<Instant> = None;
     let mut ambient_brightness = None;
+    let mut ambient_last_ok: Option<Instant> = None;
     let mut ambient_failed = false;
     let mut current_weather: Option<Weather> = None;
+    let mut effects_active = false;
+    let mut last_display_brightness: Option<(f32, Instant)> = None;
+    let mut last_display_cct: Option<(f32, Instant)> = None;
 
     while running.load(Ordering::SeqCst) {
+        if let Ok(Ok(Some(release))) = update_rx.try_recv() {
+            tray.set_update_available(&release.version);
+        }
         if let Some(incoming) = pending_config(config_event, &cfg_rx) {
-            apply_config_change(
+            if brightness_controls_changed(&cfg, &incoming) {
+                last_display_brightness = None;
+                last_display_cct = None;
+            }
+            let weather_changed = apply_config_change(
                 incoming,
                 &mut cfg,
                 &tray,
@@ -162,16 +188,24 @@ fn main() -> anyhow::Result<()> {
                 &mut ambient_brightness,
                 &mut ambient_failed,
             );
-            current_weather = None;
-            if cfg.weather_enabled {
-                weather::publish_status(&cfg, WeatherPhase::Consulting);
-                tray.set_weather_status("Clima: consultando...");
-            } else {
-                tray.set_weather_status("Clima: desligado");
+            if ambient_brightness.is_none() {
+                ambient_last_ok = None;
+            }
+            if weather_changed {
+                current_weather = None;
+                if cfg.weather_enabled && !cfg.preserve_colors() {
+                    weather::publish_status(&cfg, WeatherPhase::Consulting);
+                    tray.set_weather_status("Clima: consultando...");
+                } else {
+                    tray.set_weather_status("Clima: desligado");
+                }
             }
         }
         while let Ok((latitude, longitude, result)) = weather_rx.try_recv() {
-            if !cfg.weather_enabled || (latitude, longitude) != (cfg.latitude, cfg.longitude) {
+            if !cfg.weather_enabled
+                || cfg.preserve_colors()
+                || (latitude, longitude) != (cfg.latitude, cfg.longitude)
+            {
                 continue;
             }
             match result {
@@ -191,19 +225,32 @@ fn main() -> anyhow::Result<()> {
                     weather::publish_status(&cfg, WeatherPhase::Unavailable);
                 }
             }
-            update_ambient_status(
-                &tray,
-                cfg.ambient_enabled,
-                ambient_failed,
-                cfg.weather_enabled && current_weather.is_some(),
-            );
         }
         while let Ok(reading) = ambient_factor_rx.try_recv() {
-            apply_ambient_reading(reading, &mut ambient_brightness, &mut ambient_failed);
+            if cfg.preserve_colors() {
+                continue;
+            }
+            apply_ambient_reading(
+                reading,
+                &mut ambient_brightness,
+                &mut ambient_failed,
+                &mut ambient_last_ok,
+            );
+        }
+
+        if cfg.preserve_colors() {
+            tray.set_ambient_status("Luz ambiente: pausada para preservar cores");
+        } else if cfg.ambient_enabled && ambient_last_ok.is_none() && !ambient_failed {
+            tray.set_ambient_status("Luz ambiente: aguardando câmera");
+        } else {
+            let holding = ambient_failed
+                && fresh_camera_brightness(ambient_brightness, ambient_last_ok, Instant::now())
+                    .is_some();
             update_ambient_status(
                 &tray,
                 cfg.ambient_enabled,
                 ambient_failed,
+                holding,
                 cfg.weather_enabled && current_weather.is_some(),
             );
         }
@@ -238,11 +285,28 @@ fn main() -> anyhow::Result<()> {
                 .filter(|_| cfg.weather_enabled)
                 .map(|value| weather::fallback_brightness(target.brightness, value, &cfg, now))
                 .unwrap_or(target.brightness);
-            target.brightness =
-                brightness_with_ambient(fallback, cfg.ambient_enabled, ambient_brightness);
+            target.brightness = brightness_with_ambient(
+                fallback,
+                cfg.ambient_enabled,
+                fresh_camera_brightness(ambient_brightness, ambient_last_ok, Instant::now()),
+            );
         }
 
-        if paused && !preview {
+        if cfg.preserve_colors() || !cfg.display_enabled || (paused && !preview) || preview {
+            last_display_brightness = None;
+            last_display_cct = None;
+        } else {
+            let now = Instant::now();
+            target.brightness =
+                limit_brightness_change(last_display_brightness, target.brightness, now);
+            target.cct_kelvin = limit_color_change(last_display_cct, target.cct_kelvin, now);
+            last_display_brightness = Some((target.brightness, now));
+            last_display_cct = Some((target.cct_kelvin, now));
+        }
+
+        if cfg.preserve_colors() {
+            tray.set_tooltip("Estel · cores preservadas");
+        } else if paused && !preview {
             tray.set_tooltip("Estel · pausada");
         } else if preview {
             tray.set_tooltip("Estel · prévia noturna");
@@ -264,39 +328,67 @@ fn main() -> anyhow::Result<()> {
             "tick"
         );
 
-        if paused && !preview {
-            // parked at the moment of pause
-        } else if cfg.display_enabled {
-            let display_started = Instant::now();
-            match display::apply(&target, cfg.gamma_warm_floor_k, cfg.min_brightness) {
-                Ok(true) => tracing::debug!(cct = target.cct_kelvin as u32, "gamma ok"),
-                Ok(false) => {
-                    tracing::debug!(cct = target.cct_kelvin as u32, "gamma recusada ou ausente")
-                }
-                Err(e) => tracing::error!("display::apply: {e}"),
+        if cfg.preserve_colors() || !cfg.display_enabled {
+            retry_park(&mut effects_active, session::is_dirty(), park_screen);
+            overlay::hide(overlay_hwnd);
+        } else if paused && !preview {
+            retry_park(&mut effects_active, session::is_dirty(), park_screen);
+        } else {
+            let _screen_guard = SCREEN_LOCK
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            if !running.load(Ordering::SeqCst) {
+                break;
             }
+            if !screen_initialized {
+                let _ = display::init();
+                let _ = brightness::init();
+                screen_initialized = true;
+            }
+            if !effects_active {
+                session::mark_dirty();
+            }
+            let display_started = Instant::now();
+            let gamma_active =
+                match display::apply(&target, cfg.gamma_warm_floor_k, cfg.min_brightness) {
+                    Ok(true) => {
+                        tracing::debug!(cct = target.cct_kelvin as u32, "gamma ok");
+                        true
+                    }
+                    Ok(false) => {
+                        tracing::debug!(
+                            cct = target.cct_kelvin as u32,
+                            "gamma recusada ou ausente"
+                        );
+                        false
+                    }
+                    Err(e) => {
+                        tracing::error!("display::apply: {e}");
+                        false
+                    }
+                };
             if display_started.elapsed() > Duration::from_millis(250) {
                 tracing::warn!(
                     elapsed_ms = display_started.elapsed().as_millis(),
                     "ajuste de cor demorou"
                 );
             }
+            let brightness_started = Instant::now();
+            let ddc_active = brightness::apply(target.brightness);
             overlay::update(
                 overlay_hwnd,
                 target.cct_kelvin,
                 target.brightness,
-                ddc_ok && brightness::is_active(),
+                ddc_active,
+                gamma_active,
             );
-            let brightness_started = Instant::now();
-            brightness::apply(target.brightness);
+            effects_active = true;
             if brightness_started.elapsed() > Duration::from_millis(250) {
                 tracing::warn!(
                     elapsed_ms = brightness_started.elapsed().as_millis(),
                     "ajuste de brilho demorou"
                 );
             }
-        } else {
-            overlay::hide(overlay_hwnd);
         }
 
         if should_open_audio(paused, preview, cfg.noise_enabled, target.noise) && audio.is_none() {
@@ -325,8 +417,7 @@ fn main() -> anyhow::Result<()> {
                         paused = !paused;
                         tray.set_paused(paused);
                         if paused {
-                            display::park();
-                            brightness::park();
+                            effects_active = !park_screen();
                             overlay::hide(overlay_hwnd);
                             if let Some(ref mut aud) = audio {
                                 aud.silence();
@@ -371,15 +462,12 @@ fn main() -> anyhow::Result<()> {
                         open_settings(cfg.clone(), cfg_tx.clone(), settings_open.clone());
                     }
                     TrayAction::CheckUpdates => {
-                        if let Err(e) =
-                            webbrowser::open("https://github.com/DenisCDev/estel/releases/latest")
-                        {
-                            tracing::error!("não foi possível abrir a página de atualização: {e}");
-                            show_error(w!("Não foi possível abrir a página de atualização."));
-                        }
+                        open_settings(cfg.clone(), cfg_tx.clone(), settings_open.clone());
                     }
                     TrayAction::SetIntensity(level) => {
                         cfg.intensity = level;
+                        last_display_brightness = None;
+                        last_display_cct = None;
                         tray.set_intensity(level);
                         persist(&cfg);
                         tracing::info!(level = level.label(), "intensidade");
@@ -389,7 +477,11 @@ fn main() -> anyhow::Result<()> {
             }
 
             if let Some(incoming) = pending_config(config_event, &cfg_rx) {
-                apply_config_change(
+                if brightness_controls_changed(&cfg, &incoming) {
+                    last_display_brightness = None;
+                    last_display_cct = None;
+                }
+                let weather_changed = apply_config_change(
                     incoming,
                     &mut cfg,
                     &tray,
@@ -398,19 +490,27 @@ fn main() -> anyhow::Result<()> {
                     &mut ambient_brightness,
                     &mut ambient_failed,
                 );
-                current_weather = None;
-                tray.set_weather_status(if cfg.weather_enabled {
-                    "Clima: consultando..."
-                } else {
-                    "Clima: desligado"
-                });
-                if cfg.weather_enabled {
-                    weather::publish_status(&cfg, WeatherPhase::Consulting);
+                if ambient_brightness.is_none() {
+                    ambient_last_ok = None;
+                }
+                if weather_changed {
+                    current_weather = None;
+                    tray.set_weather_status(if cfg.weather_enabled && !cfg.preserve_colors() {
+                        "Clima: consultando..."
+                    } else {
+                        "Clima: desligado"
+                    });
+                    if cfg.weather_enabled && !cfg.preserve_colors() {
+                        weather::publish_status(&cfg, WeatherPhase::Consulting);
+                    }
                 }
                 kick = true;
             }
             while let Ok((latitude, longitude, result)) = weather_rx.try_recv() {
-                if !cfg.weather_enabled || (latitude, longitude) != (cfg.latitude, cfg.longitude) {
+                if !cfg.weather_enabled
+                    || cfg.preserve_colors()
+                    || (latitude, longitude) != (cfg.latitude, cfg.longitude)
+                {
                     continue;
                 }
                 match result {
@@ -430,22 +530,18 @@ fn main() -> anyhow::Result<()> {
                         weather::publish_status(&cfg, WeatherPhase::Unavailable);
                     }
                 }
-                update_ambient_status(
-                    &tray,
-                    cfg.ambient_enabled,
-                    ambient_failed,
-                    cfg.weather_enabled && current_weather.is_some(),
-                );
                 kick = true;
             }
 
             while let Ok(reading) = ambient_factor_rx.try_recv() {
-                apply_ambient_reading(reading, &mut ambient_brightness, &mut ambient_failed);
-                update_ambient_status(
-                    &tray,
-                    cfg.ambient_enabled,
-                    ambient_failed,
-                    cfg.weather_enabled && current_weather.is_some(),
+                if cfg.preserve_colors() {
+                    continue;
+                }
+                apply_ambient_reading(
+                    reading,
+                    &mut ambient_brightness,
+                    &mut ambient_failed,
+                    &mut ambient_last_ok,
                 );
                 kick = true;
             }
@@ -457,27 +553,100 @@ fn main() -> anyhow::Result<()> {
         }
     }
 
-    display::restore();
-    brightness::restore();
-    tracing::info!("Estel encerrado — monitor restaurado");
+    if restore_screen() {
+        tracing::info!("Estel encerrado — monitor restaurado");
+    } else {
+        tracing::warn!("Estel encerrado — restauração do monitor pendente");
+    }
     Ok(())
+}
+
+fn park_screen() -> bool {
+    let _screen_guard = SCREEN_LOCK
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    let gamma = display::park();
+    let backlight = brightness::park();
+    if gamma && backlight {
+        session::mark_clean();
+        true
+    } else {
+        tracing::warn!("restauração da tela incompleta; mantendo dados para recuperação");
+        false
+    }
+}
+
+fn retry_park(active: &mut bool, dirty: bool, park: impl FnOnce() -> bool) {
+    if *active || dirty {
+        *active = !park();
+    }
+}
+
+fn restore_screen() -> bool {
+    let _screen_guard = SCREEN_LOCK
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    restore_screen_unlocked()
+}
+
+fn restore_screen_unlocked() -> bool {
+    let gamma = display::restore();
+    let backlight = brightness::restore();
+    if gamma && backlight {
+        session::mark_clean();
+        true
+    } else {
+        tracing::warn!("restauração da tela incompleta; mantendo dados para recuperação");
+        false
+    }
 }
 
 fn apply_ambient_reading(
     reading: Result<f32, String>,
     brightness: &mut Option<f32>,
     failed: &mut bool,
+    last_ok: &mut Option<Instant>,
 ) {
     match reading {
         Ok(value) => {
             *brightness = Some(value.clamp(0.0, 1.0));
             *failed = false;
+            *last_ok = Some(Instant::now());
         }
         Err(_) => {
-            *brightness = None;
             *failed = true;
         }
     }
+}
+
+fn fresh_camera_brightness(
+    brightness: Option<f32>,
+    last_ok: Option<Instant>,
+    now: Instant,
+) -> Option<f32> {
+    last_ok
+        .filter(|last| now.saturating_duration_since(*last) <= Duration::from_secs(5 * 60))
+        .and(brightness)
+}
+
+fn limit_brightness_change(previous: Option<(f32, Instant)>, desired: f32, now: Instant) -> f32 {
+    let Some((last, at)) = previous else {
+        return desired;
+    };
+    let max_change = (now.saturating_duration_since(at).as_secs_f32() * 0.003).min(0.06);
+    last + (desired - last).clamp(-max_change, max_change)
+}
+
+fn limit_color_change(previous: Option<(f32, Instant)>, desired: f32, now: Instant) -> f32 {
+    let Some((last, at)) = previous else {
+        return desired;
+    };
+    let max_mired_change = (now.saturating_duration_since(at).as_secs_f32() * 0.4).min(10.0);
+    let last_mired = 1_000_000.0 / last.max(1_000.0);
+    let desired_mired = 1_000_000.0 / desired.max(1_000.0);
+    let next_mired =
+        last_mired + (desired_mired - last_mired).clamp(-max_mired_change, max_mired_change);
+    1_000_000.0 / next_mired
 }
 
 fn brightness_with_ambient(scheduled: f32, enabled: bool, measured: Option<f32>) -> f32 {
@@ -504,21 +673,28 @@ fn apply_config_change(
     weather_cfg_tx: &mpsc::Sender<Config>,
     ambient_brightness: &mut Option<f32>,
     ambient_failed: &mut bool,
-) {
+) -> bool {
+    let camera_changed = ambient_source_changed(cfg, &incoming);
+    let camera_worker_changed = ambient_worker_changed(cfg, &incoming);
+    let weather_changed = weather_source_changed(cfg, &incoming);
     *cfg = incoming;
     tray.set_intensity(cfg.intensity);
     tray.set_noise(cfg.noise_enabled);
-    *ambient_brightness = None;
-    *ambient_failed = false;
-    tray.set_ambient_status(if cfg.ambient_enabled {
-        "Luz ambiente: aguardando câmera"
-    } else {
-        "Luz ambiente: desligada"
-    });
-    if ambient_cfg_tx.send(cfg.clone()).is_err() {
+    if camera_changed {
+        *ambient_brightness = None;
+        *ambient_failed = false;
+        tray.set_ambient_status(if cfg.preserve_colors() {
+            "Luz ambiente: pausada para preservar cores"
+        } else if cfg.ambient_enabled {
+            "Luz ambiente: aguardando câmera"
+        } else {
+            "Luz ambiente: desligada"
+        });
+    }
+    if camera_worker_changed && ambient_cfg_tx.send(cfg.clone()).is_err() {
         tracing::error!("sensor de luz ambiente encerrou inesperadamente");
     }
-    if weather_cfg_tx.send(cfg.clone()).is_err() {
+    if weather_changed && weather_cfg_tx.send(cfg.clone()).is_err() {
         tracing::error!("consulta de clima encerrou inesperadamente");
     }
     tracing::info!(
@@ -526,6 +702,45 @@ fn apply_config_change(
         interval_s = cfg.ambient_sample_interval_seconds,
         "configuração aplicada"
     );
+    weather_changed
+}
+
+fn brightness_controls_changed(old: &Config, new: &Config) -> bool {
+    old.intensity != new.intensity
+        || old.display_enabled != new.display_enabled
+        || old.ambient_enabled != new.ambient_enabled
+        || old.ambient_camera_index != new.ambient_camera_index
+        || old.ambient_brightness_min != new.ambient_brightness_min
+        || old.ambient_brightness_max != new.ambient_brightness_max
+        || old.min_brightness != new.min_brightness
+        || old.wake != new.wake
+        || old.bed != new.bed
+        || old.weather_enabled != new.weather_enabled
+        || ((old.latitude != new.latitude || old.longitude != new.longitude) && !new.location_auto)
+        || old.window_near != new.window_near
+        || old.window_azimuth_deg != new.window_azimuth_deg
+        || old.screen_window_relation != new.screen_window_relation
+        || old.preserve_colors() != new.preserve_colors()
+}
+
+fn ambient_source_changed(old: &Config, new: &Config) -> bool {
+    old.ambient_enabled != new.ambient_enabled
+        || old.ambient_camera_index != new.ambient_camera_index
+        || old.ambient_brightness_min != new.ambient_brightness_min
+        || old.ambient_brightness_max != new.ambient_brightness_max
+        || old.preserve_colors() != new.preserve_colors()
+}
+
+fn ambient_worker_changed(old: &Config, new: &Config) -> bool {
+    ambient_source_changed(old, new)
+        || old.ambient_sample_interval_seconds != new.ambient_sample_interval_seconds
+}
+
+fn weather_source_changed(old: &Config, new: &Config) -> bool {
+    old.weather_enabled != new.weather_enabled
+        || old.latitude != new.latitude
+        || old.longitude != new.longitude
+        || old.preserve_colors() != new.preserve_colors()
 }
 
 type WeatherReading = (f64, f64, Result<Weather, String>);
@@ -539,7 +754,7 @@ fn start_weather(initial: Config) -> (mpsc::Sender<Config>, mpsc::Receiver<Weath
             let mut config = initial;
             let mut cached: Option<(f64, f64, Instant, Result<Weather, String>)> = None;
             loop {
-                if config.weather_enabled {
+                if config.weather_enabled && !config.preserve_colors() {
                     let current = cached
                         .as_ref()
                         .filter(|(latitude, longitude, fetched_at, _)| {
@@ -572,7 +787,7 @@ fn start_weather(initial: Config) -> (mpsc::Sender<Config>, mpsc::Receiver<Weath
                     .map(|(_, _, fetched_at, _)| {
                         Duration::from_secs(900).saturating_sub(fetched_at.elapsed())
                     })
-                    .filter(|_| config.weather_enabled)
+                    .filter(|_| config.weather_enabled && !config.preserve_colors())
                     .unwrap_or(Duration::from_secs(900));
                 match config_rx.recv_timeout(delay) {
                     Ok(next) => config = next,
@@ -618,18 +833,38 @@ fn tick_audio(
     }
 }
 
-fn update_ambient_status(tray: &Tray, enabled: bool, failed: bool, weather_active: bool) {
+fn ambient_status_text(
+    enabled: bool,
+    failed: bool,
+    holding: bool,
+    weather_active: bool,
+) -> &'static str {
     if !enabled {
-        tray.set_ambient_status("Luz ambiente: desligada");
+        "Luz ambiente: desligada"
+    } else if failed && holding {
+        "Câmera indisponível — mantendo última leitura"
+    } else if failed && weather_active {
+        "Câmera indisponível — clima e horário"
     } else if failed {
-        tray.set_ambient_status(if weather_active {
-            "Câmera indisponível — clima e horário"
-        } else {
-            "Câmera indisponível — brilho por horário"
-        });
+        "Câmera indisponível — brilho por horário"
     } else {
-        tray.set_ambient_status("Luz ambiente: ativa");
+        "Luz ambiente: ativa"
     }
+}
+
+fn update_ambient_status(
+    tray: &Tray,
+    enabled: bool,
+    failed: bool,
+    holding: bool,
+    weather_active: bool,
+) {
+    tray.set_ambient_status(ambient_status_text(
+        enabled,
+        failed,
+        holding,
+        weather_active,
+    ));
 }
 
 fn show_error(message: windows::core::PCWSTR) {
@@ -725,22 +960,48 @@ fn solar_times(lat: f64, lon: f64, date: NaiveDate) -> (f64, f64) {
 
 #[cfg(test)]
 mod tests {
-    use super::{apply_ambient_reading, brightness_with_ambient, should_open_audio};
+    use super::{
+        ambient_source_changed, ambient_status_text, ambient_worker_changed, apply_ambient_reading,
+        brightness_controls_changed, brightness_with_ambient, fresh_camera_brightness,
+        limit_brightness_change, limit_color_change, retry_park, should_open_audio,
+        weather_source_changed,
+    };
+    use estel::Config;
     use estel::target::NoiseColor;
+    use std::time::{Duration, Instant};
 
     #[test]
-    fn camera_failure_restores_scheduled_brightness() {
+    fn camera_failure_holds_recent_brightness_before_fallback() {
         let mut brightness = Some(0.65);
         let mut failed = false;
+        let now = Instant::now();
+        let mut last_ok = Some(now);
         apply_ambient_reading(
             Err("câmera indisponível".into()),
             &mut brightness,
             &mut failed,
+            &mut last_ok,
         );
-        assert_eq!(brightness_with_ambient(0.2, true, brightness), 0.2);
+        assert_eq!(brightness, Some(0.65));
+        assert_eq!(
+            brightness_with_ambient(
+                0.2,
+                true,
+                fresh_camera_brightness(brightness, last_ok, now + Duration::from_secs(120)),
+            ),
+            0.65
+        );
+        assert_eq!(
+            brightness_with_ambient(
+                0.2,
+                true,
+                fresh_camera_brightness(brightness, last_ok, now + Duration::from_secs(301)),
+            ),
+            0.2
+        );
         assert!(failed);
 
-        apply_ambient_reading(Ok(0.8), &mut brightness, &mut failed);
+        apply_ambient_reading(Ok(0.8), &mut brightness, &mut failed, &mut last_ok);
         assert_eq!(brightness_with_ambient(0.2, true, brightness), 0.8);
         assert_eq!(brightness_with_ambient(0.2, false, brightness), 0.2);
         assert!(!failed);
@@ -769,5 +1030,119 @@ mod tests {
             true,
             Some(NoiseColor::Pink)
         ));
+    }
+
+    #[test]
+    fn brightness_change_is_bounded_after_camera_discontinuity() {
+        let now = Instant::now();
+        assert_eq!(limit_brightness_change(None, 1.0, now), 1.0);
+        let after_ten_seconds =
+            limit_brightness_change(Some((0.3, now)), 1.0, now + Duration::from_secs(10));
+        assert!((after_ten_seconds - 0.33).abs() < 0.001);
+        let after_long_pause =
+            limit_brightness_change(Some((0.3, now)), 1.0, now + Duration::from_secs(3600));
+        assert!((after_long_pause - 0.36).abs() < 0.001);
+    }
+
+    #[test]
+    fn automatic_color_change_is_bounded_in_mired() {
+        let now = Instant::now();
+        let next = limit_color_change(Some((6500.0, now)), 2400.0, now + Duration::from_secs(10));
+        let mired_change: f32 = 1_000_000.0 / next - 1_000_000.0 / 6500.0;
+        assert!((mired_change - 4.0).abs() < 0.01);
+        assert_eq!(limit_color_change(None, 2400.0, now), 2400.0);
+    }
+
+    #[test]
+    fn explicit_intensity_change_bypasses_camera_slew_limit() {
+        let current = Config::default();
+        let mut volume_only = current.clone();
+        volume_only.max_volume = 0.1;
+        assert!(!brightness_controls_changed(&current, &volume_only));
+
+        let mut intensity = current.clone();
+        intensity.intensity = estel::config::Intensity::Suave;
+        assert!(brightness_controls_changed(&current, &intensity));
+        intensity = current.clone();
+        intensity.ambient_enabled = !current.ambient_enabled;
+        assert!(brightness_controls_changed(&current, &intensity));
+        intensity = current.clone();
+        intensity.weather_enabled = !current.weather_enabled;
+        assert!(brightness_controls_changed(&current, &intensity));
+        intensity = current.clone();
+        intensity.window_near = !current.window_near;
+        assert!(brightness_controls_changed(&current, &intensity));
+
+        let mut automatic_location = current.clone();
+        automatic_location.location_auto = true;
+        let mut refreshed_location = automatic_location.clone();
+        refreshed_location.latitude += 0.0001;
+        assert!(!brightness_controls_changed(
+            &automatic_location,
+            &refreshed_location
+        ));
+        refreshed_location.location_auto = false;
+        assert!(brightness_controls_changed(
+            &automatic_location,
+            &refreshed_location
+        ));
+    }
+
+    #[test]
+    fn camera_status_names_held_reading_and_then_fallback() {
+        assert_eq!(
+            ambient_status_text(true, true, true, false),
+            "Câmera indisponível — mantendo última leitura"
+        );
+        assert_eq!(
+            ambient_status_text(true, true, false, false),
+            "Câmera indisponível — brilho por horário"
+        );
+    }
+
+    #[test]
+    fn volume_change_keeps_camera_and_weather_readings() {
+        let current = Config::default();
+        let mut next = current.clone();
+        next.max_volume = 0.5;
+        assert!(!ambient_source_changed(&current, &next));
+        assert!(!weather_source_changed(&current, &next));
+
+        next.ambient_camera_index = 1;
+        assert!(ambient_source_changed(&current, &next));
+        next.ambient_camera_index = current.ambient_camera_index;
+        next.latitude += 1.0;
+        assert!(weather_source_changed(&current, &next));
+
+        next = current.clone();
+        next.color_critical_work = true;
+        assert!(ambient_source_changed(&current, &next));
+        assert!(weather_source_changed(&current, &next));
+
+        next = current.clone();
+        next.ambient_sample_interval_seconds = 10;
+        assert!(!ambient_source_changed(&current, &next));
+        assert!(ambient_worker_changed(&current, &next));
+    }
+
+    #[test]
+    fn failed_screen_restore_retries_while_dirty() {
+        let mut active = false;
+        let mut attempts = 0;
+        retry_park(&mut active, true, || {
+            attempts += 1;
+            false
+        });
+        assert!(active);
+        retry_park(&mut active, true, || {
+            attempts += 1;
+            true
+        });
+        assert!(!active);
+        retry_park(&mut active, false, || {
+            attempts += 1;
+            false
+        });
+        assert_eq!(attempts, 2);
     }
 }

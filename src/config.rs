@@ -94,6 +94,10 @@ pub struct Config {
     /// Master switches.
     pub display_enabled: bool,
     pub noise_enabled: bool,
+    /// Preserve the monitor's calibrated output during color-critical work.
+    pub color_critical_work: bool,
+    /// Avoid global color transforms when color discrimination may differ.
+    pub color_vision_deficiency: bool,
 
     /// Intensity of circadian effects. Switchable at runtime via tray.
     /// "alta" = full (default), "media" = 60 %, "suave" = 30 %.
@@ -132,6 +136,8 @@ impl Default for Config {
             max_volume: 0.35,
             display_enabled: true,
             noise_enabled: false,
+            color_critical_work: false,
+            color_vision_deficiency: false,
             intensity: Intensity::Alta,
             ambient_enabled: cfg!(windows),
             ambient_camera_index: 0,
@@ -208,6 +214,9 @@ fn default_schedule() -> Schedule {
 }
 
 impl Config {
+    pub fn preserve_colors(&self) -> bool {
+        self.color_critical_work || self.color_vision_deficiency
+    }
     /// `%APPDATA%\Roaming\condado\estel\config\config.toml` (or a CWD fallback).
     pub fn config_path() -> PathBuf {
         if let Some(dirs) = directories::ProjectDirs::from("studio", "condado", "estel") {

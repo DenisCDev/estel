@@ -112,10 +112,10 @@ pub fn create() -> anyhow::Result<HWND> {
 
 /// Update tint + dim. Safe to call from any thread.
 ///
-/// `ddc_active`: when true, DDC already dimmed the backlight — overlay only
-/// tints. When false (laptop / HDR / no MCCS), overlay also carries dim.
-pub fn update(hwnd: HWND, target_cct: f32, brightness: f32, ddc_active: bool) {
-    let alpha = overlay_alpha(target_cct, brightness, ddc_active);
+/// DDC handles dimming and gamma handles warmth only when all displays accept
+/// those adjustments. Otherwise the single overlay treats every display alike.
+pub fn update(hwnd: HWND, target_cct: f32, brightness: f32, ddc_active: bool, gamma_active: bool) {
+    let alpha = overlay_alpha(target_cct, brightness, ddc_active, gamma_active);
     unsafe {
         let _ = SetLayeredWindowAttributes(hwnd, COLORREF(0), alpha, LWA_ALPHA);
         if alpha == 0 {
@@ -151,19 +151,21 @@ pub fn pump_messages() {
 /// Warmth grows as CCT drops; dim grows as brightness drops, but only when
 /// DDC is not already doing that job. Capped so the wash stays a comfort
 /// layer, not a blackout.
-pub fn overlay_alpha(cct: f32, brightness: f32, ddc_active: bool) -> u8 {
-    const MAX_WARM: f32 = 38.0;
+pub fn overlay_alpha(cct: f32, brightness: f32, ddc_active: bool, gamma_active: bool) -> u8 {
     const MAX_DIM: f32 = 70.0;
-    const START_K: f32 = 4800.0;
     const FLOOR_K: f32 = 2300.0;
-    const MAX_TOTAL: f32 = 80.0;
+    let (start_k, max_warm, max_total) = if gamma_active {
+        (4800.0, 38.0, 80.0)
+    } else {
+        (6500.0, 70.0, 100.0)
+    };
 
-    let warm = if cct >= START_K {
+    let warm = if cct >= start_k {
         0.0
     } else {
-        let t = ((START_K - cct) / (START_K - FLOOR_K)).clamp(0.0, 1.0);
+        let t = ((start_k - cct) / (start_k - FLOOR_K)).clamp(0.0, 1.0);
         let t = t * t * (3.0 - 2.0 * t);
-        t * MAX_WARM
+        t * max_warm
     };
 
     let dim = if ddc_active || brightness >= 0.85 {
@@ -174,7 +176,7 @@ pub fn overlay_alpha(cct: f32, brightness: f32, ddc_active: bool) -> u8 {
         t * MAX_DIM
     };
 
-    (warm + dim).min(MAX_TOTAL) as u8
+    (warm + dim).min(max_total) as u8
 }
 
 #[cfg(test)]
@@ -183,31 +185,37 @@ mod tests {
 
     #[test]
     fn day_is_invisible() {
-        assert_eq!(overlay_alpha(6500.0, 0.9, false), 0);
-        assert_eq!(overlay_alpha(6500.0, 1.0, true), 0);
+        assert_eq!(overlay_alpha(6500.0, 0.9, false, true), 0);
+        assert_eq!(overlay_alpha(6500.0, 1.0, true, true), 0);
         assert!(
-            overlay_alpha(4700.0, 0.8, true) < 12,
+            overlay_alpha(4700.0, 0.8, true, true) < 12,
             "suave evening must not punch orange"
         );
     }
 
     #[test]
     fn alta_night_is_a_wash_not_a_filter() {
-        let a = overlay_alpha(2700.0, 0.3, true);
+        let a = overlay_alpha(2700.0, 0.3, true, true);
         assert!(a > 8, "alta night should tint a little, got {a}");
         assert!(a < 45, "alta night must stay a wash, got {a}");
     }
 
     #[test]
     fn night_without_ddc_is_darker_than_with_ddc() {
-        let laptop = overlay_alpha(2300.0, 0.18, false);
-        let desktop = overlay_alpha(2300.0, 0.18, true);
+        let laptop = overlay_alpha(2300.0, 0.18, false, true);
+        let desktop = overlay_alpha(2300.0, 0.18, true, true);
         assert!(laptop > desktop, "{laptop} vs {desktop}");
         assert!(laptop > 40, "laptop night must actually dim, got {laptop}");
     }
 
     #[test]
+    fn gamma_fallback_warms_both_displays_above_old_overlay_threshold() {
+        assert_eq!(overlay_alpha(5500.0, 0.9, true, true), 0);
+        assert!(overlay_alpha(5500.0, 0.9, true, false) > 0);
+    }
+
+    #[test]
     fn never_blacks_out() {
-        assert!(overlay_alpha(1900.0, 0.0, false) < 200);
+        assert!(overlay_alpha(1900.0, 0.0, false, true) < 200);
     }
 }
