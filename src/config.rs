@@ -46,6 +46,15 @@ impl Intensity {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum ScreenWindowRelation {
+    Front,
+    Back,
+    #[default]
+    Side,
+}
+
 /// Top-level configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -53,6 +62,19 @@ pub struct Config {
     /// Latitude/longitude for sunrise/sunset. Default: São Paulo.
     pub latitude: f64,
     pub longitude: f64,
+    /// Ask Windows for coordinates when the settings window first opens.
+    /// Existing configurations without this field keep their manual coordinates.
+    #[serde(default)]
+    pub location_auto: bool,
+    /// Weather-assisted fallback when the camera cannot provide a reading.
+    #[serde(default)]
+    pub weather_enabled: bool,
+    /// Direction of the nearest window, clockwise from north.
+    pub window_azimuth_deg: Option<f32>,
+    /// Whether daylight reaches the desk through that window.
+    pub window_near: bool,
+    /// How the display faces the window: front, back, or side.
+    pub screen_window_relation: ScreenWindowRelation,
     /// Typical wake and bed times, local `"HH:MM"`.
     pub wake: String,
     pub bed: String,
@@ -97,6 +119,11 @@ impl Default for Config {
         Config {
             latitude: -23.5505,
             longitude: -46.6333,
+            location_auto: true,
+            weather_enabled: false,
+            window_azimuth_deg: None,
+            window_near: false,
+            screen_window_relation: ScreenWindowRelation::Side,
             wake: "07:00".to_string(),
             bed: "23:00".to_string(),
             min_brightness: 0.30,
@@ -237,8 +264,20 @@ impl Config {
 
     /// Clamp every user-facing field. Call after deserialize and before save.
     pub fn sanitize(&mut self) {
-        self.latitude = self.latitude.clamp(-90.0, 90.0);
-        self.longitude = self.longitude.clamp(-180.0, 180.0);
+        self.latitude = if self.latitude.is_finite() {
+            self.latitude.clamp(-90.0, 90.0)
+        } else {
+            Config::default().latitude
+        };
+        self.longitude = if self.longitude.is_finite() {
+            self.longitude.clamp(-180.0, 180.0)
+        } else {
+            Config::default().longitude
+        };
+        self.window_azimuth_deg = self
+            .window_azimuth_deg
+            .filter(|value| value.is_finite())
+            .map(|value| value.rem_euclid(360.0));
         self.min_brightness = self.min_brightness.clamp(0.15, 0.80);
         self.gamma_warm_floor_k = self.gamma_warm_floor_k.clamp(3000.0, 4500.0);
         self.tick_seconds = self.tick_seconds.clamp(5, 120);
@@ -394,5 +433,33 @@ noise = "pink"
         assert!(cfg.ambient_brightness_min <= cfg.ambient_brightness_max);
         assert!((cfg.ambient_brightness_min - 0.35).abs() < f32::EPSILON);
         assert!((cfg.ambient_brightness_max - 1.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn older_config_keeps_manual_location() {
+        let text = toml::to_string(&Config::default()).unwrap();
+        let legacy = text
+            .lines()
+            .filter(|line| !line.starts_with("location_auto ="))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let config: Config = toml::from_str(&legacy).unwrap();
+        assert!(!config.location_auto);
+        assert!(Config::default().location_auto);
+        assert!(!config.weather_enabled);
+    }
+
+    #[test]
+    fn invalid_coordinates_restore_a_valid_location() {
+        let mut config = Config {
+            latitude: f64::NAN,
+            longitude: f64::INFINITY,
+            window_azimuth_deg: Some(f32::NAN),
+            ..Config::default()
+        };
+        config.sanitize();
+        assert_eq!(config.latitude, Config::default().latitude);
+        assert_eq!(config.longitude, Config::default().longitude);
+        assert_eq!(config.window_azimuth_deg, None);
     }
 }

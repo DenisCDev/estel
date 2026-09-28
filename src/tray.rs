@@ -21,6 +21,7 @@ pub struct Tray {
     pause: CheckMenuItem,
     autostart: CheckMenuItem,
     ambient_status: MenuItem,
+    weather_status: MenuItem,
     noise: CheckMenuItem,
     preview_id: MenuId,
     settings_id: MenuId,
@@ -57,6 +58,7 @@ impl Tray {
             false,
             None,
         );
+        let weather_status = MenuItem::new("Clima: aguardando consulta", false, None);
         let noise = CheckMenuItem::new("Ruído noturno", true, noise_enabled, None);
         let preview = MenuItem::new("Testar agora (20 s)", true, None);
         let settings = MenuItem::new("Configurações…", true, None);
@@ -82,6 +84,7 @@ impl Tray {
         let _ = menu.append(&pause);
         let _ = menu.append(&autostart);
         let _ = menu.append(&ambient_status);
+        let _ = menu.append(&weather_status);
         let _ = menu.append(&PredefinedMenuItem::separator());
         let _ = menu.append(&settings);
         let _ = menu.append(&updates);
@@ -99,6 +102,7 @@ impl Tray {
             pause,
             autostart,
             ambient_status,
+            weather_status,
             noise,
             preview_id,
             settings_id,
@@ -135,6 +139,10 @@ impl Tray {
 
     pub fn set_ambient_status(&self, status: &str) {
         self.ambient_status.set_text(status);
+    }
+
+    pub fn set_weather_status(&self, status: &str) {
+        self.weather_status.set_text(status);
     }
 
     pub fn set_noise(&self, enabled: bool) {

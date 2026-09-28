@@ -13,6 +13,8 @@ pub mod config;
 #[cfg(windows)]
 pub mod display;
 #[cfg(windows)]
+pub mod location;
+#[cfg(windows)]
 pub mod overlay;
 pub mod schedule;
 pub mod session;
@@ -21,6 +23,7 @@ pub mod target;
 pub mod tray;
 #[cfg(windows)]
 pub mod ui;
+pub mod weather;
 
 pub use color::{GammaRamp, build_gamma_ramp, cct_to_rgb, clamp_ramp_to_driver, identity_ramp};
 pub use config::Config;
