@@ -83,9 +83,9 @@ pub struct Config {
     pub ambient_camera_index: usize,
     /// Interval between samples in seconds.
     pub ambient_sample_interval_seconds: u64,
-    /// Lowest brightness multiplier when ambient light is low.
+    /// Lowest screen brightness when ambient light is low.
     pub ambient_brightness_min: f32,
-    /// Highest brightness multiplier when ambient light is high.
+    /// Highest screen brightness when ambient light is high.
     pub ambient_brightness_max: f32,
 
     /// The daily curve.
@@ -106,10 +106,10 @@ impl Default for Config {
             display_enabled: true,
             noise_enabled: false,
             intensity: Intensity::Alta,
-            ambient_enabled: false,
+            ambient_enabled: cfg!(windows),
             ambient_camera_index: 0,
             ambient_sample_interval_seconds: 30,
-            ambient_brightness_min: 0.65,
+            ambient_brightness_min: 0.35,
             ambient_brightness_max: 1.00,
             schedule: default_schedule(),
         }
@@ -244,8 +244,8 @@ impl Config {
         self.tick_seconds = self.tick_seconds.clamp(5, 120);
         self.max_volume = self.max_volume.clamp(0.0, 0.70);
         self.ambient_sample_interval_seconds = self.ambient_sample_interval_seconds.clamp(2, 120);
-        self.ambient_brightness_min = self.ambient_brightness_min.clamp(0.35, 1.30);
-        self.ambient_brightness_max = self.ambient_brightness_max.clamp(0.35, 1.30);
+        self.ambient_brightness_min = self.ambient_brightness_min.clamp(0.35, 1.0);
+        self.ambient_brightness_max = self.ambient_brightness_max.clamp(0.35, 1.0);
         if self.ambient_brightness_max < self.ambient_brightness_min {
             std::mem::swap(
                 &mut self.ambient_brightness_min,
@@ -320,6 +320,7 @@ mod tests {
         assert_eq!(cfg.schedule.keypoints.len(), back.schedule.keypoints.len());
         assert_eq!(back.wake, "07:00");
         assert_eq!(back.intensity, Intensity::Alta);
+        assert_eq!(back.ambient_enabled, cfg!(windows));
     }
 
     #[test]
@@ -392,6 +393,6 @@ noise = "pink"
         assert!(cfg.ambient_sample_interval_seconds >= 2);
         assert!(cfg.ambient_brightness_min <= cfg.ambient_brightness_max);
         assert!((cfg.ambient_brightness_min - 0.35).abs() < f32::EPSILON);
-        assert!((cfg.ambient_brightness_max - 1.30).abs() < f32::EPSILON);
+        assert!((cfg.ambient_brightness_max - 1.0).abs() < f32::EPSILON);
     }
 }

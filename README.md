@@ -41,14 +41,16 @@ Não precisa instalar Git, Rust nem abrir o terminal.
    ao lado do relógio ou dentro da seta **Mostrar ícones ocultos**.
 
 O instalador funciona por usuário, sem pedir senha de administrador. Ele cria um
-atalho no menu Iniciar e pode ser removido pelas Configurações do Windows. Como
+atalho no menu Iniciar e ativa **Iniciar com o Windows** na primeira instalação;
+essa opção pode ser desligada no menu da bandeja. O aplicativo pode ser removido
+pelas Configurações do Windows. Como
 o aplicativo ainda não tem assinatura digital, o Windows pode mostrar o
 SmartScreen: clique em **Mais informações** e depois em **Executar assim mesmo**.
 
 Quem não quiser instalar pode baixar o
-[`estel-portable-x86_64.zip`](https://github.com/DenisCDev/estel/releases/latest/download/estel-portable-x86_64.zip),
-extrair os dois arquivos e abrir `estel.exe`. O portátil guarda as configurações
-no mesmo local da versão instalada.
+[`estel-portable-x86_64.exe`](https://github.com/DenisCDev/estel/releases/latest/download/estel-portable-x86_64.exe)
+e abri-lo diretamente. O portátil guarda as configurações no mesmo local da
+versão instalada.
 
 Na bandeja:
 
@@ -83,7 +85,7 @@ versão Windows.
 |---|---|---|
 | Temperatura de cor | Reduzir luz azul-ciano no período noturno | Curva gradual em mired, com transições suaves |
 | Brilho | Evitar uma tela muito clara em um ambiente escuro | DDC no monitor ou camada escura no notebook |
-| Luz ambiente opcional | Aproximar o brilho da tela da claridade percebida no posto de trabalho | A câmera escolhida mede a média de um quadro, descarta-o localmente e entrega apenas um fator de brilho suavizado |
+| Luz ambiente no Windows | Aproximar o brilho da tela da claridade percebida no posto de trabalho | Ativo por padrão em novas configurações; a câmera escolhida mede a média de um quadro, descarta-o localmente e define o brilho independentemente da curva de horários |
 | Estabilidade visual | Evitar mudanças bruscas e cintilação criada pelo aplicativo | Sem piscar a interface nem simular PWM por software |
 | Som opcional no Windows | Criar um fundo constante sem início ou fim abrupto | Ruído rosa ou marrom, transição de pelo menos 4 s e limite de volume |
 
@@ -115,18 +117,22 @@ Não tem prompt, não tem conta, não sai dado da máquina.
 
 ### Luz ambiente por câmera (Windows)
 
-O ajuste por luz ambiente é desativado por padrão. Ao ser ligado, a pessoa
-escolhe qual webcam será usada — por exemplo, a interna ou uma Logitech. O
-Estel abre a câmera apenas para obter um quadro, calcula a luminância média de
+O ajuste por luz ambiente vem ativado por padrão no Windows. A primeira câmera
+é usada inicialmente, e a pessoa pode escolher outra webcam ou desligar a opção
+nas configurações. O Estel abre a câmera apenas para obter um quadro, calcula
+a luminância média de
 até 8.000 pixels, descarta o quadro em memória e fecha o acesso. A leitura
-padrão acontece a cada 30 segundos, tem timeout de 1 segundo e o resultado é
+padrão acontece a cada 30 segundos, tem limite de 5 segundos e o resultado é
 suavizado antes de alterar o brilho.
+
+Se a câmera estiver indisponível, o brilho continua seguindo a curva por horário.
 
 Não há gravação, visualização, rede, identificação de pessoas, rosto, olhos,
 presença ou estado emocional. Uma webcam comum não é um luxímetro: exposição
 automática e posição da câmera mudam a leitura. Por isso o recurso trabalha
 com um sinal relativo e deixa a pessoa definir os limites para ambiente escuro
-e claro. Desativar a opção devolve o fator para 100% e não acessa a câmera.
+e claro. Com a câmera ativa, o brilho medido tem prioridade sobre a curva por
+horário; desativar a opção restaura essa curva e não acessa a câmera.
 
 ---
 

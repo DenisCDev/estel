@@ -46,7 +46,8 @@ Regras de produto que prevalecem sobre o resto:
 - `tray-icon` 0.24 + `muda` 0.19. `eframe` 0.32 na janela de configurações
   (thread própria, um único exemplar).
 - Single instance: `CreateMutexW` + `Local\\EstelSingleInstance`.
-- Autostart: `auto-launch` HKCU, sem UAC.
+- Autostart: o instalador cria a entrada HKCU na primeira instalação; `auto-launch`
+  permite alterar a opção pela bandeja, sem UAC.
 - `#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]`.
   Log em `estel.log` no diretório de config.
 
@@ -58,13 +59,14 @@ Regras de produto que prevalecem sobre o resto:
 
 ## Luz ambiente por câmera
 
-- `ccap-rs` 1.6, importada como `ccap`, usa DirectShow no Windows e permite
-  enumerar dispositivos e capturar um quadro com timeout. A implementação pede
-  BGRA para poder reduzir o quadro a luminância média sem salvar pixels.
-- A captura roda em thread dedicada. Com a opção desligada, a thread espera
-  configuração e não abre câmera. Com ela ligada, abre, lê no máximo um quadro
-  em até 1 s, calcula no máximo 8.000 amostras, descarta o quadro e só envia um
-  `f32` de fator de brilho ao loop principal.
-- O fator é limitado pela configuração da pessoa e suavizado por EWMA (20%).
+- Media Foundation enumera câmeras e lê quadros YUY2. Uma leitura sem quadro
+  pode indicar um evento do fluxo; o leitor tenta até oito vezes antes de falhar.
+- A captura roda em um processo auxiliar com limite de 5 s, acionado por uma
+  thread dedicada. No Windows, a opção vem ligada por padrão. Quando desligada,
+  a thread espera nova configuração e não abre a câmera. Uma leitura válida
+  calcula no máximo 8.000 amostras, descarta o quadro e só envia um `f32` de
+  brilho ao loop principal.
+- O brilho da câmera tem prioridade sobre a curva por horário, é limitado pela
+  configuração da pessoa e suavizado por EWMA (20%).
   A câmera não é usada como luxímetro calibrado, biometria, detector de rosto,
   olhos, presença, emoção ou atenção.

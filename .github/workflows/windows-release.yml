@@ -2,6 +2,7 @@ name: Windows release
 
 on:
   workflow_dispatch:
+  pull_request:
   push:
     tags:
       - "v*"
@@ -71,7 +72,12 @@ jobs:
         shell: powershell
         run: |
           $installDir = Join-Path $env:RUNNER_TEMP "EstelInstalled"
+          $updatedDir = Join-Path $env:RUNNER_TEMP "EstelUpdated"
+          $disabledDir = Join-Path $env:RUNNER_TEMP "EstelDisabled"
           $installer = Resolve-Path artifacts\Estel-Setup-x86_64.exe
+          $configDir = Join-Path $env:APPDATA "condado\estel\config"
+          New-Item -ItemType Directory -Force $configDir | Out-Null
+          Set-Content (Join-Path $configDir "config.toml") "# portable settings"
           $install = Start-Process $installer `
             -ArgumentList @("/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/DIR=$installDir") `
             -Wait -PassThru
@@ -81,8 +87,34 @@ jobs:
           if (-not (Test-Path (Join-Path $installDir "estel.exe"))) {
             throw "O instalador não criou estel.exe"
           }
+          $autostart = (Get-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run").Estel
+          if ($autostart -ne ('"' + (Join-Path $installDir "estel.exe") + '"')) {
+            throw "O instalador não configurou o início automático"
+          }
 
-          $uninstaller = Get-ChildItem $installDir -Filter "unins*.exe" | Select-Object -First 1
+          $update = Start-Process $installer `
+            -ArgumentList @("/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/DIR=$updatedDir") `
+            -Wait -PassThru
+          if ($update.ExitCode -ne 0) {
+            throw "A atualização terminou com o código $($update.ExitCode)"
+          }
+          $autostart = (Get-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run").Estel
+          if ($autostart -ne ('"' + (Join-Path $updatedDir "estel.exe") + '"')) {
+            throw "A atualização não corrigiu o caminho do início automático"
+          }
+
+          Remove-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -Name Estel
+          $update = Start-Process $installer `
+            -ArgumentList @("/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/DIR=$disabledDir") `
+            -Wait -PassThru
+          if ($update.ExitCode -ne 0) {
+            throw "A atualização com início automático desligado terminou com o código $($update.ExitCode)"
+          }
+          if ((Get-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run").Estel) {
+            throw "A atualização religou o início automático contra a preferência existente"
+          }
+
+          $uninstaller = Get-ChildItem $disabledDir -Filter "unins*.exe" | Select-Object -First 1
           if (-not $uninstaller) {
             throw "O instalador não criou o desinstalador"
           }
@@ -92,8 +124,11 @@ jobs:
           if ($uninstall.ExitCode -ne 0) {
             throw "O desinstalador terminou com o código $($uninstall.ExitCode)"
           }
-          if (Test-Path (Join-Path $installDir "estel.exe")) {
+          if (Test-Path (Join-Path $disabledDir "estel.exe")) {
             throw "O desinstalador não removeu estel.exe"
+          }
+          if ((Get-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run").Estel) {
+            throw "O desinstalador não removeu o início automático"
           }
 
       - name: Upload workflow artifact

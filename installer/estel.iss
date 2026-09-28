@@ -32,13 +32,30 @@ Name: "brazilianportuguese"; MessagesFile: "compiler:Languages\BrazilianPortugue
 
 [Files]
 Source: "..\target\release\estel.exe"; DestDir: "{app}"; Flags: ignoreversion
-Source: "..\target\release\libstdc++-6.dll"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{autoprograms}\Estel"; Filename: "{app}\estel.exe"; Parameters: "--settings"; WorkingDir: "{app}"
 
 [Registry]
-Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueName: "Estel"; Flags: uninsdeletevalue dontcreatekey
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "Estel"; ValueData: """{app}\estel.exe"""; Flags: uninsdeletevalue; Check: EnableAutostart
 
 [Run]
 Filename: "{app}\estel.exe"; Parameters: "--settings"; Description: "Abrir Estel"; Flags: nowait postinstall skipifsilent
+
+[Code]
+var
+  PreviousInstall: Boolean;
+
+function InitializeSetup(): Boolean;
+begin
+  PreviousInstall := RegKeyExists(HKCU, 'Software\Microsoft\Windows\CurrentVersion\Uninstall\DenisCDev.Estel_is1');
+  Result := True;
+end;
+
+function EnableAutostart(): Boolean;
+var
+  ExistingCommand: string;
+begin
+  Result := (not PreviousInstall) or
+    RegQueryStringValue(HKCU, 'Software\Microsoft\Windows\CurrentVersion\Run', 'Estel', ExistingCommand);
+end;
