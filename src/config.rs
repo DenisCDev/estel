@@ -8,22 +8,16 @@ use serde::{Deserialize, Serialize};
 use crate::schedule::{Anchor, Keypoint, Schedule};
 use crate::target::NoiseColor;
 
-/// How strongly the circadian adjustments are applied.
-///
-/// All three levels still provide real benefit — a smaller dose of circadian
-/// light adjustment is better than none (Brown et al. 2022). "Suave" is
-/// designed for gaming/film sessions where color accuracy matters.
+/// How strongly the scheduled display adjustments are applied.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum Intensity {
-    /// Full schedule — maximum circadian benefit. Default.
-    #[default]
+    /// Full schedule.
     Alta,
-    /// 60 % effect — casual gaming and film. CCT ~3100 K at bedtime,
-    /// brightness ~50 %. Noise still plays softly.
+    /// Moderate default, adjustable for personal comfort.
+    #[default]
     Media,
-    /// 30 % effect — competitive gaming and colour-critical work. CCT ~4200 K
-    /// at bedtime, brightness ~75 %. Noise silenced.
+    /// Lightest scheduled adjustment.
     Suave,
 }
 
@@ -53,6 +47,17 @@ pub enum ScreenWindowRelation {
     Back,
     #[default]
     Side,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum SupportCountry {
+    #[default]
+    Brazil,
+    Portugal,
+    UnitedStates,
+    UnitedKingdom,
+    Other,
 }
 
 /// Top-level configuration.
@@ -114,6 +119,9 @@ pub struct Config {
     /// Highest screen brightness when ambient light is high.
     pub ambient_brightness_max: f32,
 
+    /// Country selected for local emotional support information.
+    pub support_country: SupportCountry,
+
     /// The daily curve.
     pub schedule: Schedule,
 }
@@ -138,12 +146,13 @@ impl Default for Config {
             noise_enabled: false,
             color_critical_work: false,
             color_vision_deficiency: false,
-            intensity: Intensity::Alta,
-            ambient_enabled: cfg!(windows),
+            intensity: Intensity::Media,
+            ambient_enabled: false,
             ambient_camera_index: 0,
             ambient_sample_interval_seconds: 30,
             ambient_brightness_min: 0.35,
             ambient_brightness_max: 1.00,
+            support_country: SupportCountry::Brazil,
             schedule: default_schedule(),
         }
     }
@@ -367,8 +376,9 @@ mod tests {
         let back: Config = toml::from_str(&text).expect("deserialize");
         assert_eq!(cfg.schedule.keypoints.len(), back.schedule.keypoints.len());
         assert_eq!(back.wake, "07:00");
-        assert_eq!(back.intensity, Intensity::Alta);
-        assert_eq!(back.ambient_enabled, cfg!(windows));
+        assert_eq!(back.intensity, Intensity::Media);
+        assert!(!back.ambient_enabled);
+        assert_eq!(back.support_country, SupportCountry::Brazil);
     }
 
     #[test]
@@ -449,13 +459,16 @@ noise = "pink"
         let text = toml::to_string(&Config::default()).unwrap();
         let legacy = text
             .lines()
-            .filter(|line| !line.starts_with("location_auto ="))
+            .filter(|line| {
+                !line.starts_with("location_auto =") && !line.starts_with("support_country =")
+            })
             .collect::<Vec<_>>()
             .join("\n");
         let config: Config = toml::from_str(&legacy).unwrap();
         assert!(!config.location_auto);
         assert!(Config::default().location_auto);
         assert!(!config.weather_enabled);
+        assert_eq!(config.support_country, SupportCountry::Brazil);
     }
 
     #[test]

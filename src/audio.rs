@@ -1,10 +1,10 @@
-//! Ambient pink/brown noise with a hard volume cap and slow envelopes.
+//! Optional pink/brown noise with bounded digital gain and slow envelopes.
 //!
 //! Optional and non-fatal: no output device → `Audio::try_new` returns `None`.
 //!
-//! Startle protection (Blumenthal & Berg, 1986): never jump the volume. Every
-//! start and stop uses a ≥3 s raised-cosine fade. There is no chime — a tone
-//! on a phase change is itself an acoustic startle, even with a Hann window.
+//! Avoid abrupt source changes: fade to silence before replacing the noise
+//! color, then fade back in. The envelope is a product choice, not a validated
+//! treatment for startle or anxiety.
 //!
 //! Pink → `rodio::source::noise::Pink` (1/f). Brown → `Red` (1/f²).
 
@@ -18,9 +18,9 @@ use rodio::{MixerDeviceSink, SampleRate};
 use crate::target::NoiseColor;
 
 const SR: u32 = 44_100;
-/// Noise is a wash under other audio, never a foreground track.
+/// Scale Estel's mixer signal; actual sound pressure depends on the output device.
 const NOISE_SCALE: f32 = 0.40;
-/// Absolute ceiling after scale. User `max_volume` cannot exceed this.
+/// Digital mixer ceiling, not a sound pressure or hearing-safety limit.
 const HARD_CAP: f32 = 0.35;
 /// Seconds to fade between silence and target (smoothstep).
 const FADE_SECS: f32 = 4.0;
@@ -32,6 +32,18 @@ fn sample_rate() -> SampleRate {
 /// Final mixer volume for Estel's noise. Always ≤ [`HARD_CAP`].
 pub fn noise_volume(noise_gain: f32, max_volume: f32) -> f32 {
     (noise_gain.clamp(0.0, 1.0) * max_volume.clamp(0.0, 1.0) * NOISE_SCALE).clamp(0.0, HARD_CAP)
+}
+
+fn source_change_ready(
+    active: Option<NoiseColor>,
+    requested: Option<NoiseColor>,
+    gain: f32,
+) -> bool {
+    active != requested && gain <= 1e-4
+}
+
+fn restart_fade(current_target: f32, next_target: f32) -> bool {
+    (next_target - current_target).abs() > 1e-5
 }
 
 /// Holds the output stream and the noise player. Drop stops audio.
@@ -71,29 +83,25 @@ impl Audio {
     /// Volume is forced to 0 *before* `append` — rodio's Player defaults to
     /// 1.0, and the first mixer quantum would otherwise be full-scale noise.
     pub fn tick(&mut self, color: Option<NoiseColor>, noise_gain: f32, max_volume: f32) {
-        if color != self.active_color {
-            match color {
-                Some(c) => {
-                    self.noise_player.set_volume(0.0);
-                    self.current = 0.0;
-                    self.noise_player.stop();
-                    self.noise_player.set_volume(0.0);
-                    append_noise(&self.noise_player, c);
-                    self.noise_player.set_volume(0.0);
-                }
-                None => {
-                    // Keep the source playing until fade-out hits zero.
-                }
+        if source_change_ready(self.active_color, color, self.current) {
+            self.noise_player.set_volume(0.0);
+            self.noise_player.stop();
+            if let Some(next) = color {
+                append_noise(&self.noise_player, next);
+                self.noise_player.set_volume(0.0);
             }
             self.active_color = color;
+            self.fade_from = 0.0;
+            self.fade_to = 0.0;
+            self.fade_started = Instant::now();
         }
 
-        let new_target = if color.is_some() {
+        let new_target = if color.is_some() && color == self.active_color {
             noise_volume(noise_gain, max_volume)
         } else {
             0.0
         };
-        if (new_target - self.fade_to).abs() > 1e-5 {
+        if restart_fade(self.fade_to, new_target) {
             self.fade_from = self.current;
             self.fade_to = new_target;
             self.fade_started = Instant::now();
@@ -107,11 +115,6 @@ impl Audio {
 
         let vol = self.current.clamp(0.0, HARD_CAP);
         self.noise_player.set_volume(vol);
-
-        if vol <= 1e-4 && color.is_none() {
-            self.noise_player.stop();
-            self.active_color = None;
-        }
     }
 
     /// Immediate silence (pause / exit). Fade is skipped because the process
@@ -180,5 +183,29 @@ mod tests {
         let mid = fade_gain(0.0, to, FADE_SECS / 2.0);
         assert!((mid - to / 2.0).abs() < 1e-5);
         assert!(fade_gain(0.0, to, 0.2) < to * 0.05);
+    }
+
+    #[test]
+    fn audible_noise_fades_out_before_source_replacement() {
+        assert!(!source_change_ready(
+            Some(NoiseColor::Pink),
+            Some(NoiseColor::Brown),
+            0.05
+        ));
+        assert!(source_change_ready(
+            Some(NoiseColor::Pink),
+            Some(NoiseColor::Brown),
+            0.0
+        ));
+        assert!(restart_fade(0.05, 0.0));
+    }
+
+    #[test]
+    fn target_changes_restart_from_current_gain() {
+        assert!(!restart_fade(0.05, 0.05));
+        assert!(restart_fade(0.05, 0.06));
+        let previous = fade_gain(0.0, 0.02, 3.9);
+        assert!((fade_gain(previous, 0.029, 0.0) - previous).abs() < 1e-6);
+        assert!(restart_fade(0.02, 0.029));
     }
 }

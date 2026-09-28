@@ -23,6 +23,7 @@ pub struct Tray {
     ambient_status: MenuItem,
     weather_status: MenuItem,
     noise: CheckMenuItem,
+    noise_status: MenuItem,
     preview_id: MenuId,
     settings_id: MenuId,
     updates_id: MenuId,
@@ -61,7 +62,16 @@ impl Tray {
         );
         let weather_status = MenuItem::new("Clima: aguardando consulta", false, None);
         let noise = CheckMenuItem::new("Ruído noturno", true, noise_enabled, None);
-        let preview = MenuItem::new("Testar agora (20 s)", true, None);
+        let noise_status = MenuItem::new(
+            if noise_enabled {
+                "Ruído: programado para a noite"
+            } else {
+                "Ruído: desligado"
+            },
+            false,
+            None,
+        );
+        let preview = MenuItem::new("Prévia noturna (20 s; som se ativado)", true, None);
         let settings = MenuItem::new("Configurações…", true, None);
         let updates = MenuItem::new(
             format!("Buscar atualização · v{}", env!("CARGO_PKG_VERSION")),
@@ -81,6 +91,7 @@ impl Tray {
         let _ = menu.append(&intensity_suave);
         let _ = menu.append(&PredefinedMenuItem::separator());
         let _ = menu.append(&noise);
+        let _ = menu.append(&noise_status);
         let _ = menu.append(&preview);
         let _ = menu.append(&pause);
         let _ = menu.append(&autostart);
@@ -105,6 +116,7 @@ impl Tray {
             ambient_status,
             weather_status,
             noise,
+            noise_status,
             preview_id,
             settings_id,
             updates_id,
@@ -149,6 +161,15 @@ impl Tray {
 
     pub fn set_noise(&self, enabled: bool) {
         self.noise.set_checked(enabled);
+        self.noise_status.set_text(if enabled {
+            "Ruído: programado para a noite"
+        } else {
+            "Ruído: desligado"
+        });
+    }
+
+    pub fn set_noise_status(&self, status: &str) {
+        self.noise_status.set_text(status);
     }
 
     pub fn set_update_available(&self, version: &str) {

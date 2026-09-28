@@ -7,11 +7,9 @@
 //! only the math, so it ports cleanly to the Android twin and is fully testable
 //! with no OS calls.
 //!
-//! Two deliberate quality choices (see `docs/VERIFIED-DECISIONS.md`):
-//! * color temperature is interpolated in **mired** (reciprocal-Kelvin) space,
-//!   so the perceived warm-shift speed is even — the most common circadian bug;
-//! * every transition uses **smoothstep** easing, because abrupt change is
-//!   itself arousing.
+//! Color temperature interpolates in reciprocal-Kelvin space, and smoothstep
+//! makes the target's slope zero at each keypoint. These are engineering choices;
+//! neither curve has been clinically validated for comfort or anxiety.
 
 use std::fmt;
 use std::str::FromStr;
@@ -240,16 +238,14 @@ fn lerp(a: f32, b: f32, t: f32) -> f32 {
     a + (b - a) * t
 }
 
-/// Interpolate color temperature in **mired** (reciprocal-Kelvin) space so the
-/// perceived rate of warm-shift is even.
+/// Interpolate color temperature in mired (reciprocal-Kelvin) space.
 fn lerp_cct(a: f32, b: f32, t: f32) -> f32 {
     let ma = 1.0e6 / a.max(1.0);
     let mb = 1.0e6 / b.max(1.0);
     1.0e6 / (ma + (mb - ma) * t)
 }
 
-/// Smoothstep ease-in-out (`3t² − 2t³`): gentle starts/ends so no transition is
-/// ever abrupt.
+/// Smoothstep ease-in-out (`3t² − 2t³`) gives zero slope at keypoints.
 fn smoothstep(t: f64) -> f64 {
     let t = t.clamp(0.0, 1.0);
     t * t * (3.0 - 2.0 * t)

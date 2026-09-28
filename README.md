@@ -24,13 +24,15 @@ SIL Open Font License nos arquivos `assets/fredoka-OFL.txt` e
 `assets/lilitaone-OFL.txt`.
 
 O Estel muda gradualmente a temperatura de cor e o brilho da tela no Windows e
-no Android. A versão Windows também pode tocar ruído rosa ou marrom em volume
+no Android. No Windows, a pessoa pode escolher ajustes suaves por clima/janela
+ou câmera e abrir uma pausa visual ou um exercício de aterramento. A versão
+Windows também pode tocar ruído rosa ou marrom em volume
 baixo durante a noite. Tudo roda no aparelho, sem conta e sem coleta de dados
 biométricos. A busca de cidade e a consulta de clima são recursos online descritos abaixo.
 
-**Não é um tratamento médico** e não substitui acompanhamento profissional ou
-medicação. As referências no fim do documento explicam as decisões de produto;
-os efeitos variam de pessoa para pessoa.
+As escolhas de conforto visual variam de pessoa para pessoa. A seção de apoio
+oferece contatos humanos por país; as [evidências e limites](docs/COMFORT-EVIDENCE.md)
+explicam o que foi estudado e o que ainda é uma escolha de engenharia.
 
 ---
 
@@ -57,10 +59,10 @@ versão instalada.
 
 Na bandeja:
 
-- **Alta / Média / Suave** — quanto da curva entra (Suave é para jogo/filme)
-- **Ruído noturno** — rosa de noite, marrom perto do sono; começa e termina em fade de 4 s; volume tem teto duro
+- **Alta / Média / Suave** — força da curva; Média é o padrão para novas instalações
+- **Ruído noturno opcional** — rosa ou marrom, com transições suaves e limite digital de ganho; o volume real depende do dispositivo
 - **Pausar** — devolve a tela agora, sem fechar
-- **Configurações…** — acordar, dormir, volume, localização
+- **Configurações…** — acordar, dormir, luz, pausa visual e apoio emocional
 - **Buscar atualização** — abre os ajustes e verifica a versão publicada no GitHub
 - **Fechar Estel** — restaura gama e backlight
 
@@ -88,7 +90,9 @@ até cinco minutos. Depois volta gradualmente ao brilho calculado pelo horário;
 mudanças automáticas de brilho são limitadas a 6 pontos percentuais por ajuste.
 Mudanças automáticas de cor também são graduais. Alterar apenas o intervalo de
 leitura da câmera não descarta a medição atual. O menu da bandeja informa quando
-a última leitura está sendo mantida.
+a última leitura está sendo mantida. Se outro aplicativo estiver usando a
+câmera, libere-a para tentar novamente; o log do Estel registra uma orientação
+para essa falha.
 
 Com duas telas, o Estel só usa o controle físico de brilho e a gama quando
 todas aceitam o ajuste. Se uma não responder ou a conexão dos monitores mudar,
@@ -111,14 +115,15 @@ versão Windows.
 
 | Ajuste | Objetivo | Como funciona |
 |---|---|---|
-| Temperatura de cor | Reduzir luz azul-ciano no período noturno | Curva gradual em mired, com transições suaves |
-| Brilho | Evitar uma tela muito clara em um ambiente escuro | DDC no monitor ou camada escura no notebook |
-| Luz ambiente no Windows | Aproximar o brilho da tela da claridade percebida no posto de trabalho | Ativo por padrão em novas configurações; a câmera escolhida mede a média de um quadro, descarta-o localmente e define o brilho independentemente da curva de horários |
-| Clima e janela no Windows | Estimar a claridade quando a câmera não mede | Radiação solar atual e posição aproximada do sol ajustam o brilho por horário; a janela pode ser configurada como de frente, de costas ou de lado para a tela |
+| Temperatura de cor | Ajustar a aparência da tela ao longo do dia conforme preferência | Curva gradual em mired, com transições suaves |
+| Brilho | Evitar uma tela desconfortavelmente clara ou escura | DDC no monitor ou camada escura no notebook; ajuste pessoal continua importante |
+| Luz ambiente no Windows | Corrigir suavemente o brilho de base pela claridade aproximada | Desligada em novas configurações; quando ativada, a câmera mede a média de um quadro, descarta-o localmente e corrige 35% da diferença para a curva por horário |
+| Clima e janela no Windows | Estimar a claridade quando a câmera não mede | Consulta opcional de radiação solar e posição aproximada do sol ajustam o brilho por horário; a janela pode ser configurada como de frente, de costas ou de lado para a tela |
 | Estabilidade visual | Evitar mudanças bruscas e cintilação criada pelo aplicativo | Sem piscar a interface nem simular PWM por software |
-| Som opcional no Windows | Criar um fundo constante sem início ou fim abrupto | Ruído rosa ou marrom, transição de pelo menos 4 s e limite de volume |
+| Som opcional no Windows | Oferecer um fundo sonoro para quem o prefere | Ruído rosa ou marrom, troca com saída e entrada graduais; o limite digital não mede o volume nos ouvidos |
+| Pausa visual e aterramento no Windows | Oferecer ações simples quando a pessoa quiser | Pausa visual de 20 s e exercício de atenção aos sentidos; contatos de apoio por país |
 
-A curva padrão (ajustável pelos horários de acordar/dormir):
+A curva base na intensidade Alta (Média e Suave reduzem o efeito):
 
 | Fase | CCT | Brilho |
 |---|---|---|
@@ -137,8 +142,8 @@ Gama do Windows 11 recusa rampas agressivas em silêncio. Estel não tenta escur
 | Alegação | Evidência | Decisão |
 |---|---|---|
 | Óculos “bloqueadores de azul” | Provavelmente nulo (Cochrane 2023) | Não |
-| Batidas binaurais | Misto, I²=91,6 % | Não |
-| Matiz azul = calmante | Falha em replicar | Dessaturação importa, não o matiz |
+| Batidas binaurais | Sem demonstração de benefício para este aplicativo | Não |
+| Cor azul como tratamento calmante | Estudos de cor e emoção dependem do contexto e não testam o Estel | Sem promessa terapêutica por matiz |
 | 432 Hz terapêutico | Fraco | Sem sino, sem alegação |
 | Biometria / loop fechado | Fora do escopo + privacidade | Nunca |
 
@@ -147,9 +152,9 @@ digitada ou as coordenadas ao Open-Meteo; os quadros da câmera permanecem locai
 
 ### Luz ambiente por câmera (Windows)
 
-O ajuste por luz ambiente vem ativado por padrão no Windows. A primeira câmera
-é usada inicialmente, e a pessoa pode escolher outra webcam ou desligar a opção
-nas configurações. O Estel abre a câmera apenas para obter um quadro, calcula
+O ajuste por câmera vem desligado em novas instalações. Quem quiser pode ativar
+a opção e escolher a webcam nas configurações. O Estel abre a câmera apenas
+para obter um quadro, calcula
 a luminância média de
 até 8.000 pixels, descarta o quadro em memória e fecha o acesso. A leitura
 padrão acontece a cada 30 segundos, tem limite de 5 segundos e o resultado é
@@ -163,8 +168,12 @@ Não há gravação, visualização ou transmissão dos quadros, identificação
 presença ou estado emocional. Uma webcam comum não é um luxímetro: exposição
 automática e posição da câmera mudam a leitura. Por isso o recurso trabalha
 com um sinal relativo e deixa a pessoa definir os limites para ambiente escuro
-e claro. Com a câmera ativa, o brilho medido tem prioridade sobre a curva por
-horário; desativar a opção restaura essa curva e não acessa a câmera.
+e claro. Com a câmera ativa, o brilho estimado corrige parcialmente a curva por
+horário, sem substituir o limite noturno por uma leitura de 100%. A câmera tem
+prioridade sobre a estimativa de clima; desativar a opção restaura a curva com
+clima opcional e não abre a câmera. Se o Windows tiver um sensor de luz ambiente,
+experimente o brilho automático do próprio sistema primeiro e evite dois
+controladores automáticos ao mesmo tempo.
 
 ### Localização, clima e orientação (Windows)
 
@@ -196,12 +205,15 @@ preservando a identidade descrita em `astro/MASCOTES.md` naquele repositório.
 ## Limites honestos
 
 - Efeitos modestos. O maior ganho é **remover** o que ativa, não adicionar algo mágico.
-- PWM de OLED (60–240 Hz) o software não muda — só evita o range de baixíssimo brilho.
+- O software não muda a modulação elétrica do painel nem mede sua cintilação.
 - Variabilidade individual é alta. Tudo importante cabe na janela de configurações.
 - A leitura ambiental é uma ajuda ergonômica, não um diagnóstico de fadiga,
   ansiedade ou saúde ocular. Pausas, iluminação difusa e redução de reflexos
   continuam sendo importantes.
-- **Não é tratamento.** Não substitui medicação nem acompanhamento clínico.
+- Ruído rosa ou marrom não tem benefício geral comprovado para foco, ansiedade
+  ou sono. O ganho digital não garante um nível seguro em decibéis nos fones.
+- O exercício de aterramento e os contatos de apoio são iniciados pela pessoa;
+  o aplicativo não detecta nem trata crises.
 
 ---
 
@@ -232,7 +244,7 @@ Detalhes de API Win32: `docs/VERIFIED-DECISIONS.md`.
 - Singh S et al. *Cochrane Database of Systematic Reviews* 2023, Issue 8, CD013244 — óculos de luz azul
 - Wilkins AJ et al. *Lighting Research & Technology* 21(1):11–18, 1989 — flicker e cefaleia
 - Hazell & Wilkins. *Psychological Medicine*, 1990 — flicker e FC em agorafobia
-- Wilms L & Oberfeld D. *Psychological Research*, 2018 — saturação > matiz
+- Wilms L & Oberfeld D. *Psychological Research*, 2018 — brilho, saturação e emoção em estímulos controlados
 - Reutimann et al. *Royal Society Open Science* 10:230432, 2023 — cor e excitação em RV
 - IEEE Std 1789-2015 — modulação de luz
 - Blumenthal TD & Berg WK. *Psychophysiology*, 1986 — rise time e sobressalto

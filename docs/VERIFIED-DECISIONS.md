@@ -5,9 +5,12 @@ checado contra docs atuais das crates / Microsoft Learn.
 
 Regras de produto que prevalecem sobre o resto:
 
-- Nunca mostrar pista médica, clínica, alarmante, urgente ou de “catástrofe”.
-- Passivo / loop aberto: horário + localização. Sem biometria, sem prompt, sem coleta.
-- Conforto adjuvante, não tratamento.
+- Conforto visual é personalizável; nenhum ajuste de cor ou brilho é apresentado
+  como tratamento para ansiedade, depressão ou pânico.
+- Ajustes automáticos usam horário, localização e entradas opcionais de clima ou
+  câmera; não há biometria, análise de emoção nem coleta de imagens.
+- Exercícios voluntários e contatos humanos por país ficam nos ajustes. As
+  fontes e seus limites estão em [COMFORT-EVIDENCE.md](COMFORT-EVIDENCE.md).
 - Windows é o produto. Android é o irmão de overlay, mesmo motor.
 
 ---
@@ -79,8 +82,8 @@ Regras de produto que prevalecem sobre o resto:
 
 - `rodio` 0.22 (`DeviceSinkBuilder` + `Player`). Sem chime: um tom na virada
   de fase é sobressalto.
-- `set_volume(0)` **antes** de `append`. Fade de 4 s. Teto duro (`HARD_CAP`)
-  depois do `max_volume` do usuário.
+- `set_volume(0)` **antes** de `append`. Fade de 4 s; a troca de cor passa por
+  silêncio. `HARD_CAP` limita o ganho digital após `max_volume`, sem medir dBA.
 
 ## Tray / UI / autostart
 
@@ -103,11 +106,12 @@ Regras de produto que prevalecem sobre o resto:
 - Media Foundation enumera câmeras e lê quadros YUY2. Uma leitura sem quadro
   pode indicar um evento do fluxo; o leitor tenta até oito vezes antes de falhar.
 - A captura roda em um processo auxiliar com limite de 5 s, acionado por uma
-  thread dedicada. No Windows, a opção vem ligada por padrão. Quando desligada,
+  thread dedicada. Em novas configurações, a opção vem desligada. Quando desligada,
   a thread espera nova configuração e não abre a câmera. Uma leitura válida
   calcula no máximo 8.000 amostras, descarta o quadro e só envia um `f32` de
   brilho ao loop principal.
-- O brilho da câmera tem prioridade sobre a curva por horário, é limitado pela
-  configuração da pessoa e suavizado por EWMA (20%).
+- A câmera tem prioridade sobre a estimativa de clima, mas corrige apenas 35%
+  da diferença para a curva por horário. Sua leitura é limitada pela configuração
+  da pessoa e suavizada por EWMA (20%).
   A câmera não é usada como luxímetro calibrado, biometria, detector de rosto,
   olhos, presença, emoção ou atenção.

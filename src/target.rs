@@ -8,8 +8,8 @@ use serde::{Deserialize, Serialize};
 
 /// Low-level ambient noise. Opt-in, never a default, always volume-capped.
 ///
-/// Pink (1/f, rain-like) and brown (1/f², ocean-like) have modest evidence for
-/// sleep onset. They are a wash, not a treatment sound.
+/// Pink (1/f) and brown (1/f²) are optional sound textures. Evidence does not
+/// establish that either improves focus, anxiety, or sleep for everyone.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum NoiseColor {
@@ -43,8 +43,8 @@ impl Target {
 
     /// Scale effects toward neutral. `factor` 1.0 = full schedule, 0.0 = off.
     ///
-    /// CCT interpolates in mired space (perceptually even). Noise is silenced
-    /// below 0.5 — fainter than that is inaudible under game/video audio.
+    /// CCT interpolates in reciprocal-Kelvin space. Noise is silenced below
+    /// the configured intensity threshold.
     pub fn attenuate(self, factor: f32) -> Self {
         const NEUTRAL_CCT: f32 = 6500.0;
         let t = factor.clamp(0.0, 1.0);

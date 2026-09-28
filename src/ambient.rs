@@ -137,7 +137,7 @@ fn sample_luminance_in_helper(camera_index: usize) -> Result<f32, String> {
                 .wait_with_output()
                 .map_err(|error| format!("não foi possível ler a câmera ({error})"))?;
             if !output.status.success() {
-                return Err("o driver da câmera não respondeu com segurança".to_owned());
+                return Err(helper_error(&output.stderr));
             }
             let output = String::from_utf8(output.stdout)
                 .map_err(|_| "o Windows retornou uma leitura de câmera inválida".to_owned())?;
@@ -155,6 +155,14 @@ fn sample_luminance_in_helper(camera_index: usize) -> Result<f32, String> {
             );
         }
         thread::sleep(Duration::from_millis(25));
+    }
+}
+
+fn helper_error(stderr: &[u8]) -> String {
+    if String::from_utf8_lossy(stderr).contains("0xC00D3704") {
+        "A câmera não iniciou e pode estar em uso por outro aplicativo. Feche o aplicativo que a utiliza ou deixe o brilho pela câmera desligado.".to_owned()
+    } else {
+        "A câmera não iniciou. Confira as permissões no Windows ou escolha outra câmera.".to_owned()
     }
 }
 
@@ -359,8 +367,8 @@ fn smooth_factor(previous: Option<f32>, measured: f32, min_factor: f32, max_fact
 #[cfg(test)]
 mod tests {
     use super::{
-        MAX_PIXEL_SAMPLES, factor_for_luminance, frame_luminance, sample_stride, smooth_factor,
-        smoothing_source_changed, yuy2_luminance,
+        MAX_PIXEL_SAMPLES, factor_for_luminance, frame_luminance, helper_error, sample_stride,
+        smooth_factor, smoothing_source_changed, yuy2_luminance,
     };
     use crate::config::Config;
 
@@ -375,6 +383,12 @@ mod tests {
     #[test]
     fn measures_yuy2_luminance() {
         assert_eq!(yuy2_luminance(&[0, 128, 255, 128]), Some(0.5));
+    }
+
+    #[test]
+    fn busy_camera_error_suggests_releasing_the_device() {
+        let message = helper_error(b"camera failed (0xC00D3704)");
+        assert!(message.contains("pode estar em uso"));
     }
 
     #[test]

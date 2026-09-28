@@ -15,7 +15,7 @@ use windows::core::w;
 #[cfg(windows)]
 use winit::platform::windows::EventLoopBuilderExtWindows;
 
-use crate::config::{Config, Intensity, ScreenWindowRelation};
+use crate::config::{Config, Intensity, ScreenWindowRelation, SupportCountry};
 use crate::location;
 use crate::update::{self, DownloadedInstaller, Release};
 use crate::weather::{self, Place};
@@ -169,6 +169,9 @@ struct SettingsApp {
     update_state: UpdateState,
     mascot_sheet: Option<egui::TextureHandle>,
     poster_collage: egui::TextureHandle,
+    eye_break_until: Option<Instant>,
+    eye_break_complete: bool,
+    grounding_open: bool,
 }
 
 impl SettingsApp {
@@ -213,6 +216,9 @@ impl SettingsApp {
             update_state: check_updates(),
             mascot_sheet,
             poster_collage,
+            eye_break_until: None,
+            eye_break_complete: false,
+            grounding_open: false,
         }
     }
 
@@ -382,14 +388,14 @@ fn poster_cover(
         painter.text(
             rect.min + Vec2::new(32.0, 165.0),
             egui::Align2::LEFT_TOP,
-            "A câmera sente o ambiente.",
+            "Brilho suave no seu ritmo.",
             FontId::proportional(16.0),
             INK,
         );
         painter.text(
             rect.min + Vec2::new(32.0, 186.0),
             egui::Align2::LEFT_TOP,
-            "O sol e o clima completam.",
+            "Clima e câmera são opcionais.",
             FontId::proportional(16.0),
             INK,
         );
@@ -675,6 +681,9 @@ impl eframe::App for SettingsApp {
             || self.camera_scan_pending
             || self.location_scan.is_some()
             || self.place_search.is_some()
+            || self
+                .eye_break_until
+                .is_some_and(|until| Instant::now() < until)
             || matches!(
                 self.update_state,
                 UpdateState::Checking(_) | UpdateState::Downloading { .. }
@@ -793,7 +802,7 @@ impl eframe::App for SettingsApp {
                 }
                 ui.add_space(32.0);
                 ui.label(RichText::new("SEU MUNDO / SEUS AJUSTES").font(poster_font(28.0)).color(DEEP_GREEN));
-                ui.label(RichText::new("Toque nos adesivos e monte a luz do seu jeito. Suave deixa a cor quase neutra para jogos e filmes.").size(14.0).color(INK));
+                ui.label(RichText::new("Escolha o ajuste que fica confortável para você. Média é o ponto de partida; Suave deixa a cor mais próxima da original.").size(14.0).color(INK));
                 ui.add_space(18.0);
 
                 ui.columns(2, |columns| {
@@ -816,7 +825,7 @@ impl eframe::App for SettingsApp {
                 }
                 ui.label(RichText::new("Rosa ou marrom, só durante a noite.").size(13.0).color(INK));
                 ui.add_space(4.0);
-                ui.label(RichText::new(format!("VOLUME MÁXIMO / {:.0}%", self.cfg.max_volume * 100.0)).font(poster_font(17.0)).color(INK));
+                ui.label(RichText::new(format!("NÍVEL DO SOM / {:.0}%", self.cfg.max_volume * 100.0)).font(poster_font(17.0)).color(INK));
                 let slider_width = ui.available_width() * 0.78;
                 let vol = ui.scope(|ui| {
                     ui.spacing_mut().slider_width = slider_width;
@@ -828,7 +837,7 @@ impl eframe::App for SettingsApp {
                     self.touch();
                 }
                 ui.label(
-                    RichText::new("O teto é baixo de propósito. Estel não toca alto.")
+                    RichText::new("Opcional. O limite é digital: em fones, confira o volume real e reduza ou desligue se incomodar. Não há benefício comprovado para todos.")
                         .size(12.0)
                         .color(MUTED),
                 );
@@ -949,8 +958,13 @@ impl eframe::App for SettingsApp {
                 ui.add_space(30.0);
                 ui.columns(2, |columns| {
                 card(&mut columns[0], PEACH, sticker_sheet.as_ref(), 2, |ui| {
-                section(ui, "05  /  SOL E JANELA");
-                if toggle_sticker(ui, &mut self.cfg.weather_enabled, "CLIMA SEM CÂMERA", BLUE) {
+                section(ui, "05  /  BRILHO, CLIMA E JANELA");
+                ui.label("Brilho mínimo da tela");
+                if ui.add(egui::Slider::new(&mut self.cfg.min_brightness, 0.15..=0.80).custom_formatter(|value, _| format!("{:.0}%", value * 100.0))).changed() {
+                    self.touch();
+                }
+                ui.label(RichText::new("Ajuste até o texto ficar legível sem a tela parecer intensa demais. Esse mínimo vale para todos os ajustes da tela.").size(12.0).color(MUTED));
+                if toggle_sticker(ui, &mut self.cfg.weather_enabled, "USAR CLIMA", BLUE) {
                     self.touch();
                 }
                 ui.label(RichText::new(weather::status_label(&self.cfg)).size(12.0).color(MUTED));
@@ -992,7 +1006,7 @@ impl eframe::App for SettingsApp {
                                 if ui.selectable_value(&mut self.cfg.screen_window_relation, relation, label).changed() { self.touch(); }
                             }
                         });
-                    ui.label(RichText::new("Use a bússola do celular para saber a direção da janela. O ajuste é aproximado; a câmera, quando disponível, tem prioridade.").size(12.0).color(MUTED));
+                    ui.label(RichText::new("Use a bússola do celular para saber a direção da janela. A estimativa é aproximada; a câmera, se ativada, tem prioridade e o clima fica de reserva.").size(12.0).color(MUTED));
                 }
                 });
 
@@ -1005,11 +1019,13 @@ impl eframe::App for SettingsApp {
                 }
                 ui.label(
                     RichText::new(
-                        "Opcional e local: o Estel mede a claridade de um quadro e o descarta. Não grava, transmite ou analisa pessoas.",
+                        "Opcional e local: a câmera estima a luz de um quadro e o descarta. Não grava, transmite ou analisa pessoas. A exposição automática pode distorcer a leitura.",
                     )
                     .size(12.0)
                     .color(MUTED),
                 );
+                ui.label(RichText::new("Se o Windows oferece brilho automático por sensor de luz, experimente essa opção primeiro. Escolha só uma leitura do ambiente: sensor do Windows ou câmera do Estel.").size(12.0).color(INK));
+                ui.hyperlink_to("Abrir ajustes de tela do Windows", "ms-settings:display");
                 if self.cfg.ambient_enabled {
                     ui.add_space(6.0);
                     ui.label(RichText::new("Câmera").size(13.0).color(INK));
@@ -1074,23 +1090,111 @@ impl eframe::App for SettingsApp {
                     {
                         self.touch();
                     }
+                    ui.label("Faixa de brilho estimada pela câmera");
+                    if ui.add(egui::Slider::new(&mut self.cfg.ambient_brightness_min, 0.35..=self.cfg.ambient_brightness_max).text("Ambiente escuro").custom_formatter(|value, _| format!("{:.0}%", value * 100.0))).changed() {
+                        self.touch();
+                    }
+                    if ui.add(egui::Slider::new(&mut self.cfg.ambient_brightness_max, self.cfg.ambient_brightness_min..=1.0).text("Ambiente claro").custom_formatter(|value, _| format!("{:.0}%", value * 100.0))).changed() {
+                        self.touch();
+                    }
                     ui.label(
                         RichText::new(
-                            "A câmera define o brilho conforme a claridade, independentemente do horário.",
+                            "A câmera faz uma correção suave sobre o horário; não substitui um sensor de luz. Se falhar, o Estel usa clima e janela quando ativos, ou só o horário.",
                         )
                         .size(12.0)
                         .color(MUTED),
                     );
+                    ui.label(RichText::new("O estado da leitura aparece no menu do ícone do Estel, ao lado do relógio. Se a câmera ficar indisponível, feche apps que a usam e confira as permissões no Windows.").size(12.0).color(MUTED));
                 }
                 });
                 });
 
                 ui.add_space(24.0);
+                card(ui, BLUE, sticker_sheet.as_ref(), 0, |ui| {
+                    section(ui, "07  /  FOCO E CONFORTO");
+                    ui.label("Luz difusa, menos reflexos e texto em tamanho confortável ajudam mais do que escurecer a tela ao máximo. Deixe a janela de lado em relação ao monitor quando puder.");
+                    ui.horizontal_wrapped(|ui| {
+                        if ui.button("PAUSA PARA OS OLHOS · 20 S").clicked() {
+                            self.eye_break_until = Some(Instant::now() + Duration::from_secs(20));
+                            self.eye_break_complete = false;
+                        }
+                        if let Some(until) = self.eye_break_until {
+                            let remaining = until.saturating_duration_since(Instant::now()).as_secs();
+                            if remaining > 0 {
+                                ui.label(format!("Olhe para longe e pisque com calma · {remaining} s"));
+                            } else {
+                                self.eye_break_until = None;
+                                self.eye_break_complete = true;
+                            }
+                        }
+                        if self.eye_break_complete {
+                            ui.label("Pausa concluída. Volte quando quiser.");
+                        }
+                    });
+                    ui.label(RichText::new("Faça pausas no seu ritmo; o lembrete de 20 segundos é um guia, não uma regra terapêutica.").size(12.0).color(MUTED));
+                });
+                ui.add_space(24.0);
+                card(ui, LILAC, sticker_sheet.as_ref(), 1, |ui| {
+                    section(ui, "08  /  MOMENTO DIFÍCIL");
+                    if ui.button(if self.grounding_open { "FECHAR EXERCÍCIO" } else { "ABRIR EXERCÍCIO DE ATERRAMENTO" }).clicked() {
+                        self.grounding_open = !self.grounding_open;
+                    }
+                    if self.grounding_open {
+                        ui.label("Sinta os pés no chão. Respire devagar, sem forçar. Observe 5 coisas que vê, 4 que ouve, 3 que toca, 2 cheiros e 1 sabor. Se for demais, escolha só uma coisa ao seu redor.");
+                    }
+                    ui.label("Quer conversar com alguém? Escolha o país para ver serviços de apoio emocional e atendimento.");
+                    egui::ComboBox::from_label("País para apoio")
+                        .selected_text(match self.cfg.support_country {
+                            SupportCountry::Brazil => "Brasil",
+                            SupportCountry::Portugal => "Portugal",
+                            SupportCountry::UnitedStates => "Estados Unidos",
+                            SupportCountry::UnitedKingdom => "Reino Unido",
+                            SupportCountry::Other => "Outro país",
+                        })
+                        .show_ui(ui, |ui| {
+                            for (country, label) in [
+                                (SupportCountry::Brazil, "Brasil"),
+                                (SupportCountry::Portugal, "Portugal"),
+                                (SupportCountry::UnitedStates, "Estados Unidos"),
+                                (SupportCountry::UnitedKingdom, "Reino Unido"),
+                                (SupportCountry::Other, "Outro país"),
+                            ] {
+                                if ui.selectable_value(&mut self.cfg.support_country, country, label).changed() {
+                                    self.touch();
+                                }
+                            }
+                        });
+                    match self.cfg.support_country {
+                        SupportCountry::Brazil => {
+                            ui.label("Apoio emocional: CVV 188 (24 h). Cuidado contínuo: CAPS do SUS. Em urgência: SAMU 192.");
+                            ui.hyperlink_to("Conversar com o CVV", "https://cvv.org.br/o-cvv/");
+                            ui.hyperlink_to("Encontrar cuidado pelo CAPS", "https://www.gov.br/saude/pt-br/composicao/saes/desmad/raps/caps/caps/");
+                        }
+                        SupportCountry::Portugal => {
+                            ui.label("Apoio psicológico: SNS 24, 808 24 24 24, opção 4. Em emergência: 112.");
+                            ui.hyperlink_to("Apoio psicológico do SNS 24", "https://portugal.gov.pt/gc23/comunicacao/noticias/linha-de-apoio-psicologico-do-sns-24-ja-atendeu-mais-de-240-mil-chamadas");
+                            ui.hyperlink_to("Contatos de emergência em Portugal", "https://www.gov.pt/guias/contactos-de-emergencia-em-portugal");
+                        }
+                        SupportCountry::UnitedStates => {
+                            ui.label("Apoio emocional: ligue ou envie mensagem para 988. Em emergência: 911.");
+                            ui.hyperlink_to("Conversar com a 988 Lifeline", "https://988lifeline.org/");
+                        }
+                        SupportCountry::UnitedKingdom => {
+                            ui.label("Escuta: Samaritans 116 123. Ajuda urgente em saúde mental: NHS 111 e escolha a opção de saúde mental. Em emergência: 999.");
+                            ui.hyperlink_to("Ajuda em saúde mental do NHS", "https://www.nhs.uk/nhs-services/mental-health-services/where-to-get-urgent-help-for-mental-health/");
+                        }
+                        SupportCountry::Other => {
+                            ui.label("Procure um serviço de escuta no seu país. Em emergência, use o número local de emergência.");
+                            ui.hyperlink_to("Buscar apoio no seu país", "https://befrienders.org/");
+                        }
+                    }
+                });
+                ui.add_space(24.0);
                 ui.separator();
                 ui.add_space(12.0);
                 ui.label(
                     RichText::new(
-                        "Estel não é um tratamento. Ajusta brilho e cor da tela; o som opcional afeta apenas o ruído do app.",
+                        "O Estel ajusta a tela e oferece apoio de momento; os serviços acima podem ajudar quando você precisar de uma pessoa.",
                     )
                     .size(12.0)
                     .color(MUTED),

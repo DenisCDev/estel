@@ -285,12 +285,14 @@ fn main() -> anyhow::Result<()> {
                 .filter(|_| cfg.weather_enabled)
                 .map(|value| weather::fallback_brightness(target.brightness, value, &cfg, now))
                 .unwrap_or(target.brightness);
-            target.brightness = brightness_with_ambient(
+            target.brightness = brightness_with_sources(
+                target.brightness,
                 fallback,
                 cfg.ambient_enabled,
                 fresh_camera_brightness(ambient_brightness, ambient_last_ok, Instant::now()),
             );
         }
+        target.brightness = target.brightness.max(cfg.min_brightness);
 
         if cfg.preserve_colors() || !cfg.display_enabled || (paused && !preview) || preview {
             last_display_brightness = None;
@@ -391,9 +393,25 @@ fn main() -> anyhow::Result<()> {
             }
         }
 
-        if should_open_audio(paused, preview, cfg.noise_enabled, target.noise) && audio.is_none() {
+        let wants_audio = requested_audio_target(&target, &cfg, paused, preview).is_some();
+        if wants_audio && audio.is_none() {
             audio = Audio::try_new();
         }
+        tray.set_noise_status(if !cfg.noise_enabled {
+            "Ruído: desligado"
+        } else if paused {
+            "Ruído: pausado"
+        } else if cfg.max_volume <= 0.0 {
+            "Ruído: nível em 0%"
+        } else if wants_audio && audio.is_none() {
+            "Ruído: sem saída de áudio; confira o Windows"
+        } else if wants_audio && preview {
+            "Ruído: prévia em reprodução"
+        } else if wants_audio {
+            "Ruído: reproduzindo à noite"
+        } else {
+            "Ruído: programado para a noite"
+        });
         tick_audio(&mut audio, &target, &cfg, paused, preview);
 
         let tick = Duration::from_secs(cfg.tick_seconds.max(5));
@@ -455,7 +473,7 @@ fn main() -> anyhow::Result<()> {
                     }
                     TrayAction::PreviewNight => {
                         preview_until = Some(Instant::now() + Duration::from_secs(20));
-                        tracing::info!("prévia noturna — 20 s de tela quente e ruído");
+                        tracing::info!("prévia noturna — 20 s de tela quente e som, se ativado");
                         kick = true;
                     }
                     TrayAction::OpenSettings => {
@@ -650,10 +668,24 @@ fn limit_color_change(previous: Option<(f32, Instant)>, desired: f32, now: Insta
 }
 
 fn brightness_with_ambient(scheduled: f32, enabled: bool, measured: Option<f32>) -> f32 {
-    if enabled {
-        measured.unwrap_or(scheduled)
+    if !enabled {
+        return scheduled;
+    }
+    measured
+        .map(|value| scheduled + (value - scheduled) * 0.35)
+        .unwrap_or(scheduled)
+}
+
+fn brightness_with_sources(
+    scheduled: f32,
+    weather: f32,
+    camera_enabled: bool,
+    camera: Option<f32>,
+) -> f32 {
+    if camera_enabled && camera.is_some() {
+        brightness_with_ambient(scheduled, true, camera)
     } else {
-        scheduled
+        weather
     }
 }
 
@@ -800,13 +832,20 @@ fn start_weather(initial: Config) -> (mpsc::Sender<Config>, mpsc::Receiver<Weath
     (config_tx, result_rx)
 }
 
-fn should_open_audio(
+fn requested_audio_target(
+    target: &Target,
+    cfg: &Config,
     paused: bool,
     preview: bool,
-    noise_enabled: bool,
-    noise: Option<NoiseColor>,
-) -> bool {
-    !paused && (preview || (noise_enabled && noise.is_some()))
+) -> Option<(NoiseColor, f32)> {
+    if paused || !cfg.noise_enabled || cfg.max_volume <= 0.0 {
+        return None;
+    }
+    let gain = if preview { 1.0 } else { target.noise_gain };
+    target
+        .noise
+        .filter(|_| gain > 0.0)
+        .map(|color| (color, gain))
 }
 
 fn tick_audio(
@@ -816,19 +855,14 @@ fn tick_audio(
     paused: bool,
     preview: bool,
 ) {
+    let requested = requested_audio_target(target, cfg, paused, preview);
     if let Some(active) = audio.as_mut() {
-        if preview && !paused {
-            active.tick(target.noise, 1.0, 0.55);
-        } else if paused || !cfg.noise_enabled {
-            active.tick(None, 0.0, cfg.max_volume);
-        } else {
-            active.tick(target.noise, target.noise_gain, cfg.max_volume);
+        match requested {
+            Some((color, gain)) => active.tick(Some(color), gain, cfg.max_volume),
+            None => active.tick(None, 0.0, cfg.max_volume),
         }
     }
-    if (paused || !cfg.noise_enabled || target.noise.is_none())
-        && !preview
-        && audio.as_ref().is_some_and(Audio::is_silent)
-    {
+    if requested.is_none() && audio.as_ref().is_some_and(Audio::is_silent) {
         *audio = None;
     }
 }
@@ -962,12 +996,12 @@ fn solar_times(lat: f64, lon: f64, date: NaiveDate) -> (f64, f64) {
 mod tests {
     use super::{
         ambient_source_changed, ambient_status_text, ambient_worker_changed, apply_ambient_reading,
-        brightness_controls_changed, brightness_with_ambient, fresh_camera_brightness,
-        limit_brightness_change, limit_color_change, retry_park, should_open_audio,
-        weather_source_changed,
+        brightness_controls_changed, brightness_with_ambient, brightness_with_sources,
+        fresh_camera_brightness, limit_brightness_change, limit_color_change,
+        requested_audio_target, retry_park, weather_source_changed,
     };
     use estel::Config;
-    use estel::target::NoiseColor;
+    use estel::target::{NoiseColor, Target};
     use std::time::{Duration, Instant};
 
     #[test]
@@ -983,13 +1017,14 @@ mod tests {
             &mut last_ok,
         );
         assert_eq!(brightness, Some(0.65));
-        assert_eq!(
-            brightness_with_ambient(
+        assert!(
+            (brightness_with_ambient(
                 0.2,
                 true,
                 fresh_camera_brightness(brightness, last_ok, now + Duration::from_secs(120)),
-            ),
-            0.65
+            ) - 0.3575)
+                .abs()
+                < 0.0001
         );
         assert_eq!(
             brightness_with_ambient(
@@ -1002,34 +1037,46 @@ mod tests {
         assert!(failed);
 
         apply_ambient_reading(Ok(0.8), &mut brightness, &mut failed, &mut last_ok);
-        assert_eq!(brightness_with_ambient(0.2, true, brightness), 0.8);
+        assert!((brightness_with_ambient(0.2, true, brightness) - 0.41).abs() < 0.0001);
         assert_eq!(brightness_with_ambient(0.2, false, brightness), 0.2);
         assert!(!failed);
     }
 
     #[test]
-    fn camera_brightness_overrides_night_schedule() {
-        assert_eq!(brightness_with_ambient(0.16, true, Some(1.0)), 1.0);
-        assert_eq!(brightness_with_ambient(0.16, true, Some(0.35)), 0.35);
+    fn camera_brightness_gently_adjusts_night_schedule() {
+        assert!((brightness_with_ambient(0.16, true, Some(1.0)) - 0.454).abs() < 0.0001);
+        assert!((brightness_with_ambient(0.16, true, Some(0.35)) - 0.2265).abs() < 0.0001);
+    }
+
+    #[test]
+    fn weather_is_only_used_without_a_camera_reading() {
+        assert!((brightness_with_sources(0.5, 0.7, true, Some(0.8)) - 0.605).abs() < 0.0001);
+        assert_eq!(brightness_with_sources(0.5, 0.7, true, None), 0.7);
+        assert_eq!(brightness_with_sources(0.5, 0.7, false, Some(0.8)), 0.7);
     }
 
     #[test]
     fn disabled_noise_does_not_open_an_audio_device() {
-        assert!(!should_open_audio(
-            false,
-            false,
-            false,
-            Some(NoiseColor::Pink)
-        ));
-        assert!(!should_open_audio(false, false, true, None));
-        assert!(!should_open_audio(true, true, true, Some(NoiseColor::Pink)));
-        assert!(should_open_audio(false, true, false, None));
-        assert!(should_open_audio(
-            false,
-            false,
-            true,
-            Some(NoiseColor::Pink)
-        ));
+        let target = Target {
+            noise: Some(NoiseColor::Pink),
+            noise_gain: 0.5,
+            ..Target::neutral()
+        };
+        let mut cfg = Config::default();
+        assert!(requested_audio_target(&target, &cfg, false, true).is_none());
+        cfg.noise_enabled = true;
+        cfg.max_volume = 0.0;
+        assert!(requested_audio_target(&target, &cfg, false, true).is_none());
+        cfg.max_volume = 0.35;
+        assert!(requested_audio_target(&target, &cfg, true, true).is_none());
+        assert_eq!(
+            requested_audio_target(&target, &cfg, false, true),
+            Some((NoiseColor::Pink, 1.0))
+        );
+        assert_eq!(
+            requested_audio_target(&target, &cfg, false, false),
+            Some((NoiseColor::Pink, 0.5))
+        );
     }
 
     #[test]
