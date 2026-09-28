@@ -23,19 +23,17 @@ const SMOOTHING: f32 = 0.20;
 
 /// Lists camera names through Media Foundation without opening a video stream.
 pub fn list_cameras() -> Result<Vec<String>, String> {
-    let session = MediaFoundationSession::start()?;
+    let _session = MediaFoundationSession::start()?;
     let devices = video_devices()?;
-    let names = devices
+    devices
         .iter()
         .map(camera_name)
-        .collect::<Result<Vec<_>, _>>();
-    drop(session);
-    names
+        .collect::<Result<Vec<_>, _>>()
 }
 
 /// Starts the isolated ambient sampler and returns its configuration input and
-/// latest brightness-factor output. Frames never leave this thread or disk.
-pub fn start(initial: Config) -> (Sender<Config>, Receiver<f32>) {
+/// latest brightness output. Frames never leave this thread or disk.
+pub fn start(initial: Config) -> (Sender<Config>, Receiver<Result<f32, String>>) {
     let (config_tx, config_rx) = mpsc::channel();
     let (factor_tx, factor_rx) = mpsc::channel();
 
@@ -47,17 +45,18 @@ pub fn start(initial: Config) -> (Sender<Config>, Receiver<f32>) {
     (config_tx, factor_rx)
 }
 
-fn run(mut config: Config, config_rx: Receiver<Config>, factor_tx: Sender<f32>) {
-    let mut smoothed = 1.0;
+fn run(mut config: Config, config_rx: Receiver<Config>, factor_tx: Sender<Result<f32, String>>) {
+    let mut smoothed = None;
     let mut last_error: Option<String> = None;
 
     loop {
         if !config.ambient_enabled {
-            if factor_tx.send(1.0).is_err() {
-                return;
-            }
+            smoothed = None;
             match config_rx.recv() {
-                Ok(next) => config = next,
+                Ok(next) => {
+                    config = next;
+                    last_error = None;
+                }
                 Err(_) => return,
             }
             continue;
@@ -65,23 +64,41 @@ fn run(mut config: Config, config_rx: Receiver<Config>, factor_tx: Sender<f32>) 
 
         match sample_luminance_in_helper(config.ambient_camera_index) {
             Ok(luminance) => {
-                let measured = factor_for_luminance(luminance);
-                smoothed += (measured - smoothed) * SMOOTHING;
-                if factor_tx.send(smoothed).is_err() {
+                let measured = factor_for_luminance(
+                    luminance,
+                    config.ambient_brightness_min,
+                    config.ambient_brightness_max,
+                );
+                let next = smooth_factor(
+                    smoothed,
+                    measured,
+                    config.ambient_brightness_min,
+                    config.ambient_brightness_max,
+                );
+                smoothed = Some(next);
+                if factor_tx.send(Ok(next)).is_err() {
                     return;
                 }
                 last_error = None;
             }
             Err(error) => {
+                smoothed = None;
                 if last_error.as_deref() != Some(error.as_str()) {
                     tracing::warn!(%error, "sensor de luz ambiente indisponível");
-                    last_error = Some(error);
+                }
+                last_error = Some(error.clone());
+                if factor_tx.send(Err(error)).is_err() {
+                    return;
                 }
             }
         }
 
         match config_rx.recv_timeout(Duration::from_secs(config.ambient_sample_interval_seconds)) {
-            Ok(next) => config = next,
+            Ok(next) => {
+                config = next;
+                smoothed = None;
+                last_error = None;
+            }
             Err(mpsc::RecvTimeoutError::Timeout) => {}
             Err(mpsc::RecvTimeoutError::Disconnected) => return,
         }
@@ -132,7 +149,7 @@ fn sample_luminance_in_helper(camera_index: usize) -> Result<f32, String> {
 }
 
 pub fn sample_luminance(camera_index: usize) -> Result<f32, String> {
-    let session = MediaFoundationSession::start()?;
+    let _session = MediaFoundationSession::start()?;
     let devices = video_devices()?;
     let device = devices
         .get(camera_index)
@@ -162,18 +179,23 @@ pub fn sample_luminance(camera_index: usize) -> Result<f32, String> {
             .map_err(|error| error.to_string())?;
     }
     let mut sample = None;
-    let mut stream_flags = 0u32;
-    unsafe {
-        reader
-            .ReadSample(
-                MF_SOURCE_READER_FIRST_VIDEO_STREAM.0 as u32,
-                0,
-                None,
-                Some(&mut stream_flags),
-                None,
-                Some(&mut sample),
-            )
-            .map_err(|error| error.to_string())?;
+    for _ in 0..8 {
+        let mut stream_flags = 0u32;
+        unsafe {
+            reader
+                .ReadSample(
+                    MF_SOURCE_READER_FIRST_VIDEO_STREAM.0 as u32,
+                    0,
+                    None,
+                    Some(&mut stream_flags),
+                    None,
+                    Some(&mut sample),
+                )
+                .map_err(|error| error.to_string())?;
+        }
+        if sample.is_some() {
+            break;
+        }
     }
     let sample = sample.ok_or_else(|| "a câmera não entregou um quadro".to_owned())?;
     let buffer = unsafe {
@@ -189,11 +211,14 @@ pub fn sample_luminance(camera_index: usize) -> Result<f32, String> {
             .Lock(&mut data, Some(&mut max_length), Some(&mut length))
             .map_err(|error| error.to_string())?;
     }
-    let luminance = unsafe { yuy2_luminance(std::slice::from_raw_parts(data, length as usize)) };
+    let luminance = if length == 0 || data.is_null() {
+        None
+    } else {
+        unsafe { yuy2_luminance(std::slice::from_raw_parts(data, length as usize)) }
+    };
     unsafe {
         let _ = buffer.Unlock();
     }
-    drop(session);
     luminance.ok_or_else(|| "quadro de câmera vazio".to_owned())
 }
 
@@ -232,6 +257,9 @@ fn video_devices() -> Result<Vec<IMFActivate>, String> {
     unsafe {
         MFEnumDeviceSources(&attributes, &mut raw_devices, &mut count)
             .map_err(|error| error.to_string())?;
+    }
+    if count == 0 || raw_devices.is_null() {
+        return Err("nenhuma câmera foi encontrada pelo Windows".to_owned());
     }
     let devices = unsafe {
         std::slice::from_raw_parts(raw_devices, count as usize)
@@ -274,10 +302,10 @@ fn frame_luminance(data: &[u8]) -> Option<f32> {
         return None;
     }
 
-    let stride = (pixels / MAX_PIXEL_SAMPLES).max(1);
+    let stride = sample_stride(pixels);
     let mut total = 0.0;
     let mut count = 0usize;
-    for pixel in data.chunks_exact(4).step_by(stride) {
+    for pixel in data.as_chunks::<4>().0.iter().step_by(stride) {
         let blue = pixel[0] as f32;
         let green = pixel[1] as f32;
         let red = pixel[2] as f32;
@@ -292,28 +320,39 @@ fn yuy2_luminance(data: &[u8]) -> Option<f32> {
     if pixels == 0 {
         return None;
     }
-    let stride = (pixels / MAX_PIXEL_SAMPLES).max(1);
+    let stride = sample_stride(pixels);
     let mut total = 0.0;
     let mut count = 0usize;
-    for pixel in data.chunks_exact(2).step_by(stride) {
+    for pixel in data.as_chunks::<2>().0.iter().step_by(stride) {
         total += pixel[0] as f32;
         count += 1;
     }
     Some((total / count as f32 / 255.0).clamp(0.0, 1.0))
 }
 
-fn factor_for_luminance(luminance: f32) -> f32 {
-    const MIN_FACTOR: f32 = 0.65;
-    const MAX_FACTOR: f32 = 1.25;
-
+fn factor_for_luminance(luminance: f32, min_factor: f32, max_factor: f32) -> f32 {
     let normalized = luminance.clamp(0.0, 1.0);
     let response = normalized.powf(0.55);
-    MIN_FACTOR + (MAX_FACTOR - MIN_FACTOR) * response
+    min_factor + (max_factor - min_factor) * response
+}
+
+fn sample_stride(pixels: usize) -> usize {
+    pixels.div_ceil(MAX_PIXEL_SAMPLES).max(1)
+}
+
+fn smooth_factor(previous: Option<f32>, measured: f32, min_factor: f32, max_factor: f32) -> f32 {
+    previous
+        .map_or(measured, |value| value + (measured - value) * SMOOTHING)
+        .clamp(min_factor, max_factor)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{factor_for_luminance, frame_luminance, yuy2_luminance};
+    use super::{
+        MAX_PIXEL_SAMPLES, factor_for_luminance, frame_luminance, sample_stride, smooth_factor,
+        yuy2_luminance,
+    };
+    use crate::config::Config;
 
     #[test]
     fn measures_bgra_luminance() {
@@ -330,9 +369,40 @@ mod tests {
 
     #[test]
     fn maps_dark_and_very_bright_rooms_continuously() {
-        assert!((factor_for_luminance(0.0) - 0.65).abs() < f32::EPSILON);
-        assert!((factor_for_luminance(1.0) - 1.25).abs() < f32::EPSILON);
-        assert!(factor_for_luminance(0.25) < factor_for_luminance(0.50));
-        assert!(factor_for_luminance(0.50) < factor_for_luminance(0.75));
+        assert!((factor_for_luminance(0.0, 0.65, 1.25) - 0.65).abs() < f32::EPSILON);
+        assert!((factor_for_luminance(1.0, 0.65, 1.25) - 1.25).abs() < f32::EPSILON);
+        assert!(factor_for_luminance(0.25, 0.65, 1.25) < factor_for_luminance(0.50, 0.65, 1.25));
+        assert!(factor_for_luminance(0.50, 0.65, 1.25) < factor_for_luminance(0.75, 0.65, 1.25));
+    }
+
+    #[test]
+    fn brightness_factor_stays_within_configured_limits() {
+        let config = Config::default();
+        assert!(
+            factor_for_luminance(
+                0.0,
+                config.ambient_brightness_min,
+                config.ambient_brightness_max,
+            ) >= config.ambient_brightness_min
+        );
+        assert!(
+            factor_for_luminance(
+                1.0,
+                config.ambient_brightness_min,
+                config.ambient_brightness_max,
+            ) <= config.ambient_brightness_max
+        );
+    }
+
+    #[test]
+    fn first_camera_reading_respects_configured_limit() {
+        let measured = factor_for_luminance(0.0, 0.35, 0.35);
+        assert!(smooth_factor(None, measured, 0.35, 0.35) <= 0.35);
+    }
+
+    #[test]
+    fn samples_at_most_eight_thousand_pixels() {
+        let pixels: usize = 640 * 480;
+        assert!(pixels.div_ceil(sample_stride(pixels)) <= MAX_PIXEL_SAMPLES);
     }
 }

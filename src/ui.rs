@@ -1,7 +1,7 @@
 //! Small settings window. Light, sparse, no animation.
 
 use std::process::{Command, Stdio};
-use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::time::{Duration, Instant};
 
 use eframe::egui::{self, Color32, CornerRadius, Frame, Margin, RichText, Stroke, Vec2};
@@ -71,6 +71,7 @@ struct SettingsApp {
     save_error: Option<String>,
     camera_names: Vec<String>,
     camera_error: Option<String>,
+    camera_scan_pending: bool,
     camera_scan: Receiver<Result<Vec<String>, String>>,
 }
 
@@ -96,6 +97,7 @@ impl SettingsApp {
             save_error: None,
             camera_names: Vec::new(),
             camera_error: None,
+            camera_scan_pending: true,
             camera_scan,
         }
     }
@@ -131,16 +133,29 @@ impl SettingsApp {
 }
 
 fn list_cameras_in_helper() -> Result<Vec<String>, String> {
-    let output = Command::new("powershell.exe")
-        .args([
-            "-NoProfile",
-            "-NonInteractive",
-            "-Command",
-            "Get-PnpDevice -Class Camera | Where-Object { $_.Status -eq 'OK' } | ForEach-Object { $_.FriendlyName }",
-        ])
+    let executable = std::env::current_exe()
+        .map_err(|error| format!("Não foi possível localizar o Estel ({error})."))?;
+    let mut child = Command::new(executable)
+        .arg("--list-cameras")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .output()
+        .spawn()
+        .map_err(|error| format!("Não foi possível consultar as câmeras ({error})."))?;
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while child
+        .try_wait()
+        .map_err(|error| format!("Não foi possível consultar as câmeras ({error})."))?
+        .is_none()
+    {
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err("A busca por câmeras demorou demais.".to_owned());
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let output = child
+        .wait_with_output()
         .map_err(|error| format!("Não foi possível consultar as câmeras ({error})."))?;
     if !output.status.success() {
         return Err("O Windows não permitiu listar as câmeras conectadas.".to_owned());
@@ -161,19 +176,29 @@ fn list_cameras_in_helper() -> Result<Vec<String>, String> {
 
 impl eframe::App for SettingsApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        if let Ok(result) = self.camera_scan.try_recv() {
-            match result {
-                Ok(cameras) => {
-                    self.camera_names = cameras;
-                    self.camera_error = None;
+        if self.camera_scan_pending {
+            match self.camera_scan.try_recv() {
+                Ok(result) => {
+                    self.camera_scan_pending = false;
+                    match result {
+                        Ok(cameras) => {
+                            self.camera_names = cameras;
+                            self.camera_error = None;
+                        }
+                        Err(error) => self.camera_error = Some(error),
+                    }
                 }
-                Err(error) => self.camera_error = Some(error),
+                Err(TryRecvError::Disconnected) => {
+                    self.camera_scan_pending = false;
+                    self.camera_error = Some("A busca por câmeras foi interrompida.".into());
+                }
+                Err(TryRecvError::Empty) => {}
             }
         }
         if self.dirty && self.last_edit.elapsed() > Duration::from_millis(400) {
             self.flush();
         }
-        if self.dirty {
+        if self.dirty || self.camera_scan_pending {
             ctx.request_repaint_after(Duration::from_millis(200));
         }
 
@@ -298,7 +323,11 @@ impl eframe::App for SettingsApp {
                         .camera_names
                         .get(self.cfg.ambient_camera_index)
                         .map(String::as_str)
-                        .unwrap_or("Dispositivo salvo indisponível");
+                        .unwrap_or(if self.camera_scan_pending {
+                            "Buscando câmeras..."
+                        } else {
+                            "Dispositivo salvo indisponível"
+                        });
                     let mut camera_changed = false;
                     egui::ComboBox::from_id_salt("ambient-camera")
                         .selected_text(selected)
@@ -317,13 +346,21 @@ impl eframe::App for SettingsApp {
                         self.touch();
                     }
                     if self.camera_names.is_empty() {
-                        let message = self.camera_error.as_deref().unwrap_or(
-                            "Nenhuma câmera foi encontrada pelo Windows.",
-                        );
+                        let message = if self.camera_scan_pending {
+                            "Buscando câmeras..."
+                        } else {
+                            self.camera_error.as_deref().unwrap_or(
+                                "Nenhuma câmera foi encontrada pelo Windows.",
+                            )
+                        };
                         ui.label(
                             RichText::new(message)
                                 .size(12.0)
-                                .color(Color32::from_rgb(160, 40, 30)),
+                                .color(if self.camera_scan_pending {
+                                    MUTED
+                                } else {
+                                    Color32::from_rgb(160, 40, 30)
+                                }),
                         );
                     }
                     ui.add_space(4.0);
@@ -342,7 +379,7 @@ impl eframe::App for SettingsApp {
                     }
                     ui.label(
                         RichText::new(
-                            "Ajuste contínuo: reduz suavemente no escuro e reforça o brilho em ambientes muito claros.",
+                            "A câmera define o brilho conforme a claridade, independentemente do horário.",
                         )
                         .size(12.0)
                         .color(MUTED),

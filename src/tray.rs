@@ -20,6 +20,7 @@ pub struct Tray {
     icon: TrayIcon,
     pause: CheckMenuItem,
     autostart: CheckMenuItem,
+    ambient_status: MenuItem,
     noise: CheckMenuItem,
     preview_id: MenuId,
     settings_id: MenuId,
@@ -35,6 +36,7 @@ impl Tray {
         autostart_enabled: bool,
         intensity: Intensity,
         noise_enabled: bool,
+        ambient_enabled: bool,
     ) -> anyhow::Result<Self> {
         let icon = phial_icon()?;
 
@@ -46,6 +48,15 @@ impl Tray {
 
         let pause = CheckMenuItem::new("Pausar", true, false, None);
         let autostart = CheckMenuItem::new("Iniciar com o Windows", true, autostart_enabled, None);
+        let ambient_status = MenuItem::new(
+            if ambient_enabled {
+                "Luz ambiente: aguardando câmera"
+            } else {
+                "Luz ambiente: desligada"
+            },
+            false,
+            None,
+        );
         let noise = CheckMenuItem::new("Ruído noturno", true, noise_enabled, None);
         let preview = MenuItem::new("Testar agora (20 s)", true, None);
         let settings = MenuItem::new("Configurações…", true, None);
@@ -70,6 +81,7 @@ impl Tray {
         let _ = menu.append(&preview);
         let _ = menu.append(&pause);
         let _ = menu.append(&autostart);
+        let _ = menu.append(&ambient_status);
         let _ = menu.append(&PredefinedMenuItem::separator());
         let _ = menu.append(&settings);
         let _ = menu.append(&updates);
@@ -86,6 +98,7 @@ impl Tray {
             icon: tray,
             pause,
             autostart,
+            ambient_status,
             noise,
             preview_id,
             settings_id,
@@ -118,6 +131,10 @@ impl Tray {
 
     pub fn set_autostart(&self, enabled: bool) {
         self.autostart.set_checked(enabled);
+    }
+
+    pub fn set_ambient_status(&self, status: &str) {
+        self.ambient_status.set_text(status);
     }
 
     pub fn set_noise(&self, enabled: bool) {

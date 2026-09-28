@@ -96,6 +96,7 @@ fn main() -> anyhow::Result<()> {
         autostart.as_ref().is_some_and(|a| a.is_enabled()),
         cfg.intensity,
         cfg.noise_enabled,
+        cfg.ambient_enabled,
     )?;
     let overlay_hwnd = overlay::create()?;
 
@@ -138,19 +139,28 @@ fn main() -> anyhow::Result<()> {
 
     let mut paused = false;
     let mut preview_until: Option<Instant> = None;
-    let mut ambient_factor = 1.0;
+    let mut ambient_brightness = None;
+    let mut ambient_failed = false;
 
     while running.load(Ordering::SeqCst) {
         while let Ok(incoming) = cfg_rx.try_recv() {
             cfg = incoming;
             tray.set_intensity(cfg.intensity);
             tray.set_noise(cfg.noise_enabled);
+            ambient_brightness = None;
+            ambient_failed = false;
+            tray.set_ambient_status(if cfg.ambient_enabled {
+                "Luz ambiente: aguardando câmera"
+            } else {
+                "Luz ambiente: desligada"
+            });
             if ambient_cfg_tx.send(cfg.clone()).is_err() {
                 tracing::error!("sensor de luz ambiente encerrou inesperadamente");
             }
         }
-        while let Ok(factor) = ambient_factor_rx.try_recv() {
-            ambient_factor = factor;
+        while let Ok(reading) = ambient_factor_rx.try_recv() {
+            apply_ambient_reading(reading, &mut ambient_brightness, &mut ambient_failed);
+            update_ambient_status(&tray, cfg.ambient_enabled, ambient_failed);
         }
 
         let now = Local::now();
@@ -178,14 +188,17 @@ fn main() -> anyhow::Result<()> {
                 noise_gain: 1.0,
                 noise: Some(NoiseColor::Pink),
             };
-        } else if cfg.ambient_enabled {
-            target.brightness = (target.brightness * ambient_factor).clamp(0.0, 1.0);
+        } else {
+            target.brightness =
+                brightness_with_ambient(target.brightness, cfg.ambient_enabled, ambient_brightness);
         }
 
         if paused && !preview {
             tray.set_tooltip("Estel · pausada");
         } else if preview {
             tray.set_tooltip("Estel · prévia noturna");
+        } else if cfg.ambient_enabled && ambient_failed {
+            tray.set_tooltip("Estel · câmera indisponível");
         } else {
             tray.set_tooltip(&format!(
                 "Estel · {} K · {}",
@@ -321,14 +334,22 @@ fn main() -> anyhow::Result<()> {
                 cfg = incoming;
                 tray.set_intensity(cfg.intensity);
                 tray.set_noise(cfg.noise_enabled);
+                ambient_brightness = None;
+                ambient_failed = false;
+                tray.set_ambient_status(if cfg.ambient_enabled {
+                    "Luz ambiente: aguardando câmera"
+                } else {
+                    "Luz ambiente: desligada"
+                });
                 if ambient_cfg_tx.send(cfg.clone()).is_err() {
                     tracing::error!("sensor de luz ambiente encerrou inesperadamente");
                 }
                 kick = true;
             }
 
-            while let Ok(factor) = ambient_factor_rx.try_recv() {
-                ambient_factor = factor;
+            while let Ok(reading) = ambient_factor_rx.try_recv() {
+                apply_ambient_reading(reading, &mut ambient_brightness, &mut ambient_failed);
+                update_ambient_status(&tray, cfg.ambient_enabled, ambient_failed);
                 kick = true;
             }
 
@@ -351,6 +372,41 @@ fn main() -> anyhow::Result<()> {
     brightness::restore();
     tracing::info!("Estel encerrado — monitor restaurado");
     Ok(())
+}
+
+fn apply_ambient_reading(
+    reading: Result<f32, String>,
+    brightness: &mut Option<f32>,
+    failed: &mut bool,
+) {
+    match reading {
+        Ok(value) => {
+            *brightness = Some(value.clamp(0.0, 1.0));
+            *failed = false;
+        }
+        Err(_) => {
+            *brightness = None;
+            *failed = true;
+        }
+    }
+}
+
+fn brightness_with_ambient(scheduled: f32, enabled: bool, measured: Option<f32>) -> f32 {
+    if enabled {
+        measured.unwrap_or(scheduled)
+    } else {
+        scheduled
+    }
+}
+
+fn update_ambient_status(tray: &Tray, enabled: bool, failed: bool) {
+    if !enabled {
+        tray.set_ambient_status("Luz ambiente: desligada");
+    } else if failed {
+        tray.set_ambient_status("Câmera indisponível — brilho por horário");
+    } else {
+        tray.set_ambient_status("Luz ambiente: ativa");
+    }
 }
 
 fn show_error(message: windows::core::PCWSTR) {
@@ -442,4 +498,33 @@ fn solar_times(lat: f64, lon: f64, date: NaiveDate) -> (f64, f64) {
         .map(to_min)
         .unwrap_or(fallback.1);
     (sr, ss)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{apply_ambient_reading, brightness_with_ambient};
+
+    #[test]
+    fn camera_failure_restores_scheduled_brightness() {
+        let mut brightness = Some(0.65);
+        let mut failed = false;
+        apply_ambient_reading(
+            Err("câmera indisponível".into()),
+            &mut brightness,
+            &mut failed,
+        );
+        assert_eq!(brightness_with_ambient(0.2, true, brightness), 0.2);
+        assert!(failed);
+
+        apply_ambient_reading(Ok(0.8), &mut brightness, &mut failed);
+        assert_eq!(brightness_with_ambient(0.2, true, brightness), 0.8);
+        assert_eq!(brightness_with_ambient(0.2, false, brightness), 0.2);
+        assert!(!failed);
+    }
+
+    #[test]
+    fn camera_brightness_overrides_night_schedule() {
+        assert_eq!(brightness_with_ambient(0.16, true, Some(1.0)), 1.0);
+        assert_eq!(brightness_with_ambient(0.16, true, Some(0.35)), 0.35);
+    }
 }
