@@ -2,7 +2,7 @@
 
 use std::sync::{
     Arc, Mutex,
-    atomic::{AtomicBool, Ordering},
+    atomic::{AtomicBool, AtomicU32, Ordering},
     mpsc,
 };
 use std::time::{Duration, Instant};
@@ -12,7 +12,10 @@ use windows::Win32::Foundation::{ERROR_ALREADY_EXISTS, GetLastError, HANDLE, WAI
 use windows::Win32::System::Threading::{
     CreateEventW, CreateMutexW, SetEvent, WaitForSingleObject,
 };
-use windows::Win32::UI::WindowsAndMessaging::{MB_ICONERROR, MB_OK, MessageBoxW};
+use windows::Win32::UI::WindowsAndMessaging::{
+    FindWindowExW, GetWindowThreadProcessId, MB_ICONERROR, MB_OK, MessageBoxW, SW_RESTORE,
+    SetForegroundWindow, ShowWindow,
+};
 use windows::core::w;
 
 use estel::ambient;
@@ -29,6 +32,7 @@ use estel::update;
 use estel::weather::{self, Weather, WeatherPhase};
 
 static SCREEN_LOCK: Mutex<()> = Mutex::new(());
+const SETTINGS_STARTING: u32 = 1;
 
 fn main() -> anyhow::Result<()> {
     init_log();
@@ -148,7 +152,7 @@ fn main() -> anyhow::Result<()> {
     let (cfg_tx, cfg_rx) = mpsc::channel::<Config>();
     let (ambient_cfg_tx, ambient_factor_rx) = ambient::start(cfg.clone());
     let (weather_cfg_tx, weather_rx) = start_weather(cfg.clone());
-    let settings_open = Arc::new(AtomicBool::new(false));
+    let settings_open = Arc::new(AtomicU32::new(0));
     if open_settings_on_start {
         open_settings(cfg.clone(), cfg_tx.clone(), settings_open.clone());
     }
@@ -914,8 +918,31 @@ fn persist(cfg: &Config) {
     }
 }
 
-fn open_settings(_cfg: Config, tx: mpsc::Sender<Config>, flag: Arc<AtomicBool>) {
-    if flag.swap(true, Ordering::SeqCst) {
+fn open_settings(_cfg: Config, tx: mpsc::Sender<Config>, state: Arc<AtomicU32>) {
+    if let Err(pid) =
+        state.compare_exchange(0, SETTINGS_STARTING, Ordering::SeqCst, Ordering::SeqCst)
+    {
+        if pid != SETTINGS_STARTING {
+            let mut previous = None;
+            for _ in 0..64 {
+                let Ok(window) = (unsafe { FindWindowExW(None, previous, None, w!("Estel")) })
+                else {
+                    break;
+                };
+                let mut window_pid = 0;
+                unsafe { GetWindowThreadProcessId(window, Some(&mut window_pid)) };
+                if window_pid == pid {
+                    unsafe {
+                        let _ = ShowWindow(window, SW_RESTORE);
+                        if !SetForegroundWindow(window).as_bool() {
+                            tracing::warn!("não foi possível trazer a janela do Estel para frente");
+                        }
+                    }
+                    break;
+                }
+                previous = Some(window);
+            }
+        }
         return;
     }
     std::thread::spawn(move || {
@@ -925,13 +952,16 @@ fn open_settings(_cfg: Config, tx: mpsc::Sender<Config>, flag: Arc<AtomicBool>) 
                     .arg("--settings-window")
                     .spawn()
             })
-            .and_then(|mut child| child.wait());
+            .and_then(|mut child| {
+                state.store(child.id(), Ordering::SeqCst);
+                child.wait()
+            });
+        state.store(0, Ordering::SeqCst);
         if let Err(error) = result {
             tracing::error!("janela de configurações: {error}");
             show_error(w!("Não foi possível abrir as configurações."));
         }
         let _ = tx.send(Config::load_or_default());
-        flag.store(false, Ordering::SeqCst);
     });
 }
 

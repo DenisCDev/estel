@@ -1,7 +1,7 @@
 //! System tray icon, context menu, and HKCU autostart.
 
 use muda::{CheckMenuItem, Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem};
-use tray_icon::{TrayIcon, TrayIconBuilder};
+use tray_icon::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
 
 use crate::config::Intensity;
 
@@ -104,6 +104,7 @@ impl Tray {
 
         let tray = TrayIconBuilder::new()
             .with_menu(Box::new(menu))
+            .with_menu_on_left_click(false)
             .with_tooltip("Estel")
             .with_icon(icon)
             .build()
@@ -178,6 +179,13 @@ impl Tray {
     }
 
     pub fn poll(&self) -> Option<TrayAction> {
+        if let Some(action) = TrayIconEvent::receiver()
+            .try_iter()
+            .take(32)
+            .find_map(|event| icon_action(&event))
+        {
+            return Some(action);
+        }
         let event = MenuEvent::receiver().try_recv().ok()?;
         let id = &event.id;
 
@@ -212,6 +220,17 @@ impl Tray {
             return Some(TrayAction::Quit);
         }
         None
+    }
+}
+
+fn icon_action(event: &TrayIconEvent) -> Option<TrayAction> {
+    match event {
+        TrayIconEvent::Click {
+            button: MouseButton::Left,
+            button_state: MouseButtonState::Up,
+            ..
+        } => Some(TrayAction::OpenSettings),
+        _ => None,
     }
 }
 
@@ -263,6 +282,26 @@ fn avatar_icon() -> anyhow::Result<tray_icon::Icon> {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    #[test]
+    fn left_click_opens_settings_and_right_click_keeps_menu() {
+        let click = |button, button_state| TrayIconEvent::Click {
+            id: tray_icon::TrayIconId::new("estel"),
+            position: tray_icon::dpi::PhysicalPosition::default(),
+            rect: tray_icon::Rect::default(),
+            button,
+            button_state,
+        };
+
+        assert!(matches!(
+            icon_action(&click(MouseButton::Left, MouseButtonState::Up)),
+            Some(TrayAction::OpenSettings)
+        ));
+        assert!(icon_action(&click(MouseButton::Left, MouseButtonState::Down)).is_none());
+        assert!(icon_action(&click(MouseButton::Right, MouseButtonState::Up)).is_none());
+    }
+
     #[test]
     fn avatar_has_transparent_corners() {
         let image = image::load_from_memory_with_format(
