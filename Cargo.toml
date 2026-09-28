@@ -12,9 +12,11 @@ lto = "thin"
 codegen-units = 1
 strip = true
 
+[build-dependencies]
+winres = "0.1.12"
+
 [dependencies]
 anyhow = "1.0.103"
-base64 = "0.22"
 chrono = "0.4.45"
 ctrlc = "3.4"
 directories = "6.0.0"

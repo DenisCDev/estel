@@ -4,7 +4,6 @@ use std::process::{Command, Stdio};
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::time::{Duration, Instant};
 
-use base64::Engine;
 use eframe::egui::{self, Color32, CornerRadius, Frame, Margin, RichText, Stroke, Vec2};
 use windows::Win32::Foundation::CloseHandle;
 use windows::Win32::System::Threading::{EVENT_MODIFY_STATE, OpenEventW, SetEvent};
@@ -29,11 +28,23 @@ const PEACH: Color32 = Color32::from_rgb(255, 229, 207);
 const LILAC: Color32 = Color32::from_rgb(239, 229, 255);
 
 pub fn run(initial: Config, tx: Sender<Config>) -> eframe::Result {
+    let avatar = image::load_from_memory_with_format(
+        include_bytes!("../assets/avatar-icon.png"),
+        image::ImageFormat::Png,
+    )
+    .expect("O ícone do Estel está inválido")
+    .resize_exact(64, 64, image::imageops::FilterType::Lanczos3)
+    .into_rgba8();
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("Estel")
-            .with_inner_size([560.0, 800.0])
-            .with_min_inner_size([460.0, 600.0])
+            .with_icon(egui::IconData {
+                rgba: avatar.into_raw(),
+                width: 64,
+                height: 64,
+            })
+            .with_inner_size([760.0, 850.0])
+            .with_min_inner_size([700.0, 650.0])
             .with_resizable(true)
             .with_maximize_button(false),
         event_loop_builder: Some(Box::new(|builder| {
@@ -69,7 +80,7 @@ pub fn run(initial: Config, tx: Sender<Config>) -> eframe::Result {
             Ok(Box::new(SettingsApp::new(
                 initial,
                 tx,
-                load_mascot(&cc.egui_ctx),
+                load_mascot_sheet(&cc.egui_ctx),
             )))
         }),
     )
@@ -98,11 +109,11 @@ struct SettingsApp {
     place_results: Vec<Place>,
     place_error: Option<String>,
     selected_place: Option<String>,
-    mascot: Option<egui::TextureHandle>,
+    mascot_sheet: Option<egui::TextureHandle>,
 }
 
 impl SettingsApp {
-    fn new(cfg: Config, tx: Sender<Config>, mascot: Option<egui::TextureHandle>) -> Self {
+    fn new(cfg: Config, tx: Sender<Config>, mascot_sheet: Option<egui::TextureHandle>) -> Self {
         let location_request = cfg.location_auto;
         let (wake_h, wake_m) = split_hhmm(&cfg.wake);
         let (bed_h, bed_m) = split_hhmm(&cfg.bed);
@@ -134,7 +145,7 @@ impl SettingsApp {
             place_results: Vec::new(),
             place_error: None,
             selected_place: None,
-            mascot,
+            mascot_sheet,
         }
     }
 
@@ -198,35 +209,77 @@ impl SettingsApp {
     }
 }
 
-fn load_mascot(ctx: &egui::Context) -> Option<egui::TextureHandle> {
-    let png = base64::engine::general_purpose::STANDARD
-        .decode(include_str!("../assets/mascote.b64").trim())
-        .ok()?;
-    let image = image::load_from_memory_with_format(&png, image::ImageFormat::Png)
-        .ok()?
-        .into_rgba8();
+fn load_mascot_sheet(ctx: &egui::Context) -> Option<egui::TextureHandle> {
+    let image = image::load_from_memory_with_format(
+        include_bytes!("../assets/mascote-kawaii.png"),
+        image::ImageFormat::Png,
+    )
+    .ok()?
+    .into_rgba8();
     let size = [image.width() as usize, image.height() as usize];
     let color = egui::ColorImage::from_rgba_unmultiplied(size, image.as_raw());
-    Some(ctx.load_texture("mascote-denisdev", color, egui::TextureOptions::LINEAR))
+    Some(ctx.load_texture(
+        "mascote-denisdev-kawaii",
+        color,
+        egui::TextureOptions::LINEAR,
+    ))
+}
+
+fn poster(
+    ui: &mut egui::Ui,
+    sheet: &egui::TextureHandle,
+    index: usize,
+    fill: Color32,
+    title: &str,
+    caption: &str,
+    width: f32,
+) {
+    let x = (index % 2) as f32 * 0.5;
+    let y = (index / 2) as f32 * 0.5;
+    let uv = egui::Rect::from_min_max(
+        egui::pos2(x + 0.005, y + 0.005),
+        egui::pos2(x + 0.495, y + 0.495),
+    );
+    let offsets = [0.0, 20.0, 5.0, 26.0];
+    let scales = [0.94, 0.82, 1.0, 0.85];
+    ui.vertical(|ui| {
+        ui.set_width(width);
+        ui.add_space(offsets[index]);
+        ui.label(
+            RichText::new(format!("0{} / ESTEL", index + 1))
+                .size(11.0)
+                .color(AMBER)
+                .strong(),
+        );
+        let (rect, _) = ui.allocate_exact_size(Vec2::new(width, width), egui::Sense::hover());
+        let painter = ui.painter();
+        let center = rect.center() + Vec2::new(4.0, 5.0);
+        painter.circle_filled(center, width * 0.40, fill);
+        painter.circle_filled(rect.min + Vec2::new(width * 0.18, width * 0.15), 4.0, AMBER);
+        painter.circle_filled(rect.max - Vec2::new(width * 0.12, width * 0.24), 3.0, AMBER);
+        let side = width * scales[index];
+        let art = egui::Rect::from_center_size(center, Vec2::splat(side));
+        painter.image(sheet.id(), art, uv, Color32::WHITE);
+        ui.label(RichText::new(title).size(17.0).color(INK).strong());
+        ui.label(RichText::new(caption).size(11.0).color(MUTED));
+    });
 }
 
 fn card<R>(ui: &mut egui::Ui, fill: Color32, body: impl FnOnce(&mut egui::Ui) -> R) -> R {
-    Frame::new()
-        .fill(fill)
-        .stroke(Stroke::new(1.5_f32, LINE))
-        .corner_radius(CornerRadius::same(18))
-        .inner_margin(Margin::same(18))
-        .shadow(egui::Shadow {
-            offset: [3, 3],
-            blur: 0,
-            spread: 0,
-            color: Color32::from_rgb(55, 67, 59),
-        })
-        .show(ui, |ui| {
-            ui.set_min_width(ui.available_width());
-            body(ui)
-        })
-        .inner
+    let width = ui.available_width();
+    ui.vertical(|ui| {
+        ui.set_width(width);
+        ui.add_space(8.0);
+        let (accent, _) = ui.allocate_exact_size(Vec2::new(52.0, 6.0), egui::Sense::hover());
+        ui.painter()
+            .rect_filled(accent, CornerRadius::same(3), fill);
+        ui.add_space(7.0);
+        let result = body(ui);
+        ui.add_space(23.0);
+        ui.separator();
+        result
+    })
+    .inner
 }
 
 fn signal_config_changed() -> bool {
@@ -399,30 +452,26 @@ impl eframe::App for SettingsApp {
         egui::CentralPanel::default()
             .frame(Frame::new().fill(PAPER).inner_margin(Margin::same(28)))
             .show(ctx, |ui| {
+                let content_width = (ui.available_width() - 16.0).max(0.0);
                 egui::ScrollArea::vertical()
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
-                card(ui, MINT, |ui| {
+                ui.set_width(content_width);
+                ui.label(RichText::new("Estel: seu cantinho de luz").size(32.0).color(INK).strong());
+                ui.label(RichText::new("Brilho, cor e clima no ritmo do seu ambiente.").size(16.0).color(MUTED));
+                ui.add_space(18.0);
+                if let Some(sheet) = &self.mascot_sheet {
+                    let width = (content_width - 36.0) / 4.0;
                     ui.horizontal(|ui| {
-                        if let Some(mascot) = &self.mascot {
-                            ui.add(
-                                egui::Image::new((mascot.id(), Vec2::splat(132.0))).uv(
-                                    egui::Rect::from_min_max(
-                                        egui::pos2(0.18, 0.12),
-                                        egui::pos2(0.82, 0.82),
-                                    ),
-                                ),
-                            );
-                        }
-                        ui.vertical(|ui| {
-                            ui.label(RichText::new("estel").size(34.0).color(INK).strong());
-                            ui.label(RichText::new("um cantinho de luz para sua tela").size(15.0).color(INK));
-                            ui.add_space(4.0);
-                            ui.label(RichText::new("denisdev_  /  ajuste do seu jeito").size(11.0).color(AMBER).strong());
-                        });
+                        poster(ui, sheet, 0, YELLOW, "Claridade", "a luz do seu dia", width);
+                        poster(ui, sheet, 1, PINK, "Seu lugar", "sol na sua cidade", width);
+                        poster(ui, sheet, 2, PEACH, "Janela", "reflexos sob cuidado", width);
+                        poster(ui, sheet, 3, BLUE, "Câmera", "o ambiente decide", width);
                     });
-                });
+                }
                 ui.add_space(20.0);
+                ui.label(RichText::new("Personalize cada detalhe logo abaixo.").size(13.0).color(INK).strong());
+                ui.add_space(14.0);
 
                 card(ui, PINK, |ui| {
                 section(ui, "01  /  INTENSIDADE");

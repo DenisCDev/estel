@@ -12,12 +12,11 @@
 </p>
 
 <p align="center">
-  <img src="assets/mtg-phial.jpg" width="640" alt="Frasco de Galadriel — arte de Andrea Piparo, Tales of Middle-earth (2023)">
+  <img src="assets/avatar-icon.png" width="180" alt="Avatar do Estel: personagem de cabelo preto com mechas verdes">
 </p>
 
 <p align="center">
-  <sub><i>"a light to you in dark places"</i><br>
-  — <b>A Sociedade do Anel</b>, livro II, capítulo VIII · arte de Andrea Piparo para Magic: The Gathering, Tales of Middle-earth (2023)
+  <sub>Avatar inspirado no personagem do <a href="https://github.com/DenisCDev/portfolio-site">portfólio DenisDev</a>.</sub>
 </p>
 
 O Estel muda gradualmente a temperatura de cor e o brilho da tela no Windows e
@@ -159,9 +158,9 @@ aproximada do sol e a radiação direta para compensar reflexos, até um limite
 pequeno. A câmera, quando funciona, sempre tem prioridade sobre essa estimativa.
 Nascer e pôr do sol da localização continuam definindo a curva de cor.
 
-A janela de configurações usa o mascote original do
-[portfólio do Denis](https://github.com/DenisCDev/portfolio-site), com a
-identidade visual descrita em `astro/MASCOTES.md` naquele repositório.
+A janela de configurações usa quatro cenas ilustradas derivadas do mascote
+original do [portfólio do Denis](https://github.com/DenisCDev/portfolio-site),
+preservando a identidade descrita em `astro/MASCOTES.md` naquele repositório.
 
 ---
 
