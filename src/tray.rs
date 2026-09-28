@@ -21,6 +21,7 @@ pub struct Tray {
     pause: CheckMenuItem,
     autostart: CheckMenuItem,
     ambient_status: MenuItem,
+    weather_status: MenuItem,
     noise: CheckMenuItem,
     preview_id: MenuId,
     settings_id: MenuId,
@@ -38,7 +39,7 @@ impl Tray {
         noise_enabled: bool,
         ambient_enabled: bool,
     ) -> anyhow::Result<Self> {
-        let icon = phial_icon()?;
+        let icon = avatar_icon()?;
 
         let intensity_alta = CheckMenuItem::new("Alta", true, intensity == Intensity::Alta, None);
         let intensity_media =
@@ -57,6 +58,7 @@ impl Tray {
             false,
             None,
         );
+        let weather_status = MenuItem::new("Clima: aguardando consulta", false, None);
         let noise = CheckMenuItem::new("Ruído noturno", true, noise_enabled, None);
         let preview = MenuItem::new("Testar agora (20 s)", true, None);
         let settings = MenuItem::new("Configurações…", true, None);
@@ -82,6 +84,7 @@ impl Tray {
         let _ = menu.append(&pause);
         let _ = menu.append(&autostart);
         let _ = menu.append(&ambient_status);
+        let _ = menu.append(&weather_status);
         let _ = menu.append(&PredefinedMenuItem::separator());
         let _ = menu.append(&settings);
         let _ = menu.append(&updates);
@@ -99,6 +102,7 @@ impl Tray {
             pause,
             autostart,
             ambient_status,
+            weather_status,
             noise,
             preview_id,
             settings_id,
@@ -135,6 +139,10 @@ impl Tray {
 
     pub fn set_ambient_status(&self, status: &str) {
         self.ambient_status.set_text(status);
+    }
+
+    pub fn set_weather_status(&self, status: &str) {
+        self.weather_status.set_text(status);
     }
 
     pub fn set_noise(&self, enabled: bool) {
@@ -215,107 +223,27 @@ impl Autostart {
     }
 }
 
-/// 32×32 raster of `assets/icon-phial.svg`: a short lidded jar with a teal halo.
-fn phial_icon() -> anyhow::Result<tray_icon::Icon> {
-    const SZ: u32 = 32;
-    const SAMPLES: u32 = 3;
-    let mut rgba = vec![0u8; (SZ * SZ * 4) as usize];
-    for y in 0..SZ {
-        for x in 0..SZ {
-            let mut acc = [0.0_f32; 4];
-            for sy in 0..SAMPLES {
-                for sx in 0..SAMPLES {
-                    let u = (x as f32 + (sx as f32 + 0.5) / SAMPLES as f32) / SZ as f32;
-                    let v = (y as f32 + (sy as f32 + 0.5) / SAMPLES as f32) / SZ as f32;
-                    let p = phial_pixel(u, v);
-                    acc[0] += p[0];
-                    acc[1] += p[1];
-                    acc[2] += p[2];
-                    acc[3] += p[3];
-                }
-            }
-            let n = (SAMPLES * SAMPLES) as f32;
-            let i = ((y * SZ + x) * 4) as usize;
-            let a = (acc[3] / n).clamp(0.0, 255.0);
-            // Premultiplied-looking RGB: keep color even when a < 255.
-            rgba[i] = (acc[0] / n).clamp(0.0, 255.0) as u8;
-            rgba[i + 1] = (acc[1] / n).clamp(0.0, 255.0) as u8;
-            rgba[i + 2] = (acc[2] / n).clamp(0.0, 255.0) as u8;
-            rgba[i + 3] = a as u8;
-        }
-    }
-    tray_icon::Icon::from_rgba(rgba, SZ, SZ).map_err(|e| anyhow::anyhow!("{e}"))
-}
-
-/// Unit square, y down. A short round jar with a lid — reads at 32 px.
-/// Starlight inside, teal halo. Not a teardrop (that looked like a pin/bulb).
-fn phial_pixel(u: f32, v: f32) -> [f32; 4] {
-    let x = (u - 0.50) * 2.0;
-    let y = (v - 0.50) * 2.0;
-
-    let d_body = sd_jar(x, y);
-    let d_lid = sd_lid(x, y);
-    let d_shape = d_body.min(d_lid);
-
-    let glow = smoothstep(0.50, 0.0, d_shape + 0.22);
-    let fill = smoothstep(0.035, -0.02, d_shape);
-    let core = (-(x * x * 7.0 + (y - 0.18).powi(2) * 6.0)).exp();
-    let highlight = smoothstep(0.14, 0.0, (x + 0.18).abs() + (y - 0.10).abs() * 0.5);
-
-    let mut r = 50.0 * glow + 175.0 * fill + 80.0 * core + 28.0 * highlight * fill;
-    let mut g = 200.0 * glow + 220.0 * fill + 45.0 * core + 22.0 * highlight * fill;
-    let mut b = 195.0 * glow + 215.0 * fill + 18.0 * core + 32.0 * highlight * fill;
-    if d_lid < 0.02 {
-        r = r * 0.78 + 210.0 * fill;
-        g = g * 0.82 + 212.0 * fill;
-        b = b * 0.88 + 220.0 * fill;
-    }
-    let a = (glow * 130.0 + fill * 255.0).clamp(0.0, 255.0);
-    [r.min(255.0), g.min(255.0), b.min(255.0), a]
-}
-
-fn sd_jar(x: f32, y: f32) -> f32 {
-    // Wide squat body — a pote, not a bottle.
-    sd_ellipse(x, y - 0.16, 0.56, 0.58)
-}
-
-fn sd_lid(x: f32, y: f32) -> f32 {
-    let plate = sd_round_box(x, y + 0.50, 0.40, 0.09, 0.04);
-    let knob = (x * x + (y + 0.68).powi(2)).sqrt() - 0.11;
-    plate.min(knob)
-}
-
-fn sd_ellipse(x: f32, y: f32, rx: f32, ry: f32) -> f32 {
-    (x / rx).powi(2) + (y / ry).powi(2) - 1.0
-}
-
-fn sd_round_box(x: f32, y: f32, hx: f32, hy: f32, r: f32) -> f32 {
-    let qx = x.abs() - hx + r;
-    let qy = y.abs() - hy + r;
-    qx.max(qy).min(0.0) + (qx.max(0.0).powi(2) + qy.max(0.0).powi(2)).sqrt() - r
-}
-
-fn smoothstep(edge0: f32, edge1: f32, x: f32) -> f32 {
-    let t = ((x - edge0) / (edge1 - edge0)).clamp(0.0, 1.0);
-    t * t * (3.0 - 2.0 * t)
+fn avatar_icon() -> anyhow::Result<tray_icon::Icon> {
+    let image = image::load_from_memory_with_format(
+        include_bytes!("../assets/avatar-icon.png"),
+        image::ImageFormat::Png,
+    )?
+    .resize_exact(32, 32, image::imageops::FilterType::Lanczos3)
+    .into_rgba8();
+    tray_icon::Icon::from_rgba(image.into_raw(), 32, 32).map_err(|error| anyhow::anyhow!("{error}"))
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[test]
-    fn phial_is_not_an_orange_disc() {
-        let body = phial_pixel(0.50, 0.58);
-        assert!(body[3] > 180.0, "body should be opaque, alpha {}", body[3]);
-        assert!(
-            body[1] + body[2] > body[0] * 1.4,
-            "glass is teal/silver, not orange: r={} g={} b={}",
-            body[0],
-            body[1],
-            body[2]
-        );
-        let corner = phial_pixel(0.02, 0.02);
-        assert!(corner[3] < 20.0, "corners stay transparent");
+    fn avatar_has_transparent_corners() {
+        let image = image::load_from_memory_with_format(
+            include_bytes!("../assets/avatar-icon.png"),
+            image::ImageFormat::Png,
+        )
+        .unwrap()
+        .into_rgba8();
+        assert_eq!(image.get_pixel(0, 0)[3], 0);
+        assert!(image.get_pixel(image.width() / 2, image.height() / 2)[3] > 0);
     }
 }

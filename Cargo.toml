@@ -1,6 +1,6 @@
 [package]
 name = "estel"
-version = "0.2.1"
+version = "0.2.2"
 edition = "2024"
 description = "Aplicativo para ajustar cor e brilho no Windows, com som ambiente opcional."
 license = "MIT"
@@ -12,14 +12,21 @@ lto = "thin"
 codegen-units = 1
 strip = true
 
+[build-dependencies]
+winres = "0.1.12"
+
 [dependencies]
 anyhow = "1.0.103"
 chrono = "0.4.45"
 ctrlc = "3.4"
 directories = "6.0.0"
+image = { version = "0.25", default-features = false, features = ["png"] }
 serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0"
 sunrise = "3.0.0"
 toml = "1.1.2"
+ureq = { version = "2.12", default-features = false, features = ["tls"] }
+url = "2.5"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 rodio = { version = "0.22", default-features = false, features = ["playback", "noise"] }
@@ -32,6 +39,8 @@ winit = "0.30"
 muda = "0.19"
 tray-icon = "0.24"
 windows = { version = "0.62.2", features = [
+    "Devices_Geolocation",
+    "Foundation",
     "Win32_Devices_Display",
     "Win32_Foundation",
     "Win32_Graphics_Gdi",
@@ -43,3 +52,4 @@ windows = { version = "0.62.2", features = [
     "Win32_UI_ColorSystem",
     "Win32_UI_WindowsAndMessaging",
 ] }
+windows-future = "0.3.2"

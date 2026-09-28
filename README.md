@@ -7,23 +7,22 @@
 <p align="center">
   <img src="https://img.shields.io/badge/windows-rust-D4A24E?labelColor=171310" alt="aplicativo Windows em Rust">
   <img src="https://img.shields.io/badge/android-kotlin-D4A24E?labelColor=171310" alt="aplicativo Android em Kotlin">
-  <img src="https://img.shields.io/badge/dados-locais-43A48E?labelColor=171310" alt="dados mantidos localmente">
+  <img src="https://img.shields.io/badge/câmera-local-43A48E?labelColor=171310" alt="quadros da câmera mantidos localmente">
   <img src="https://img.shields.io/badge/license-MIT-D4A24E?labelColor=171310" alt="licença MIT">
 </p>
 
 <p align="center">
-  <img src="assets/mtg-phial.jpg" width="640" alt="Frasco de Galadriel — arte de Andrea Piparo, Tales of Middle-earth (2023)">
+  <img src="assets/avatar-icon.png" width="180" alt="Avatar do Estel: personagem de cabelo preto com mechas verdes">
 </p>
 
 <p align="center">
-  <sub><i>"a light to you in dark places"</i><br>
-  — <b>A Sociedade do Anel</b>, livro II, capítulo VIII · arte de Andrea Piparo para Magic: The Gathering, Tales of Middle-earth (2023)
+  <sub>Avatar inspirado no personagem do <a href="https://github.com/DenisCDev/portfolio-site">portfólio DenisDev</a>.</sub>
 </p>
 
 O Estel muda gradualmente a temperatura de cor e o brilho da tela no Windows e
 no Android. A versão Windows também pode tocar ruído rosa ou marrom em volume
 baixo durante a noite. Tudo roda no aparelho, sem conta e sem coleta de dados
-biométricos.
+biométricos. A busca de cidade e a consulta de clima são recursos online descritos abaixo.
 
 **Não é um tratamento médico** e não substitui acompanhamento profissional ou
 medicação. As referências no fim do documento explicam as decisões de produto;
@@ -86,6 +85,7 @@ versão Windows.
 | Temperatura de cor | Reduzir luz azul-ciano no período noturno | Curva gradual em mired, com transições suaves |
 | Brilho | Evitar uma tela muito clara em um ambiente escuro | DDC no monitor ou camada escura no notebook |
 | Luz ambiente no Windows | Aproximar o brilho da tela da claridade percebida no posto de trabalho | Ativo por padrão em novas configurações; a câmera escolhida mede a média de um quadro, descarta-o localmente e define o brilho independentemente da curva de horários |
+| Clima e janela no Windows | Estimar a claridade quando a câmera não mede | Radiação solar atual e posição aproximada do sol ajustam o brilho por horário; a janela pode ser configurada como de frente, de costas ou de lado para a tela |
 | Estabilidade visual | Evitar mudanças bruscas e cintilação criada pelo aplicativo | Sem piscar a interface nem simular PWM por software |
 | Som opcional no Windows | Criar um fundo constante sem início ou fim abrupto | Ruído rosa ou marrom, transição de pelo menos 4 s e limite de volume |
 
@@ -113,7 +113,8 @@ Gama do Windows 11 recusa rampas agressivas em silêncio. Estel não tenta escur
 | 432 Hz terapêutico | Fraco | Sem sino, sem alegação |
 | Biometria / loop fechado | Fora do escopo + privacidade | Nunca |
 
-Não tem prompt, não tem conta, não sai dado da máquina.
+Não tem conta nem coleta de imagens. As consultas online opcionais enviam a busca
+digitada ou as coordenadas ao Open-Meteo; os quadros da câmera permanecem locais.
 
 ### Luz ambiente por câmera (Windows)
 
@@ -125,14 +126,41 @@ até 8.000 pixels, descarta o quadro em memória e fecha o acesso. A leitura
 padrão acontece a cada 30 segundos, tem limite de 5 segundos e o resultado é
 suavizado antes de alterar o brilho.
 
-Se a câmera estiver indisponível, o brilho continua seguindo a curva por horário.
+Se a câmera estiver indisponível, o brilho segue a curva por horário com uma
+correção limitada pela radiação solar, se a consulta de clima estiver ativa.
+Mudanças feitas na janela de configurações são aplicadas assim que são salvas.
 
-Não há gravação, visualização, rede, identificação de pessoas, rosto, olhos,
+Não há gravação, visualização ou transmissão dos quadros, identificação de pessoas, rosto, olhos,
 presença ou estado emocional. Uma webcam comum não é um luxímetro: exposição
 automática e posição da câmera mudam a leitura. Por isso o recurso trabalha
 com um sinal relativo e deixa a pessoa definir os limites para ambiente escuro
 e claro. Com a câmera ativa, o brilho medido tem prioridade sobre a curva por
 horário; desativar a opção restaura essa curva e não acessa a câmera.
+
+### Localização, clima e orientação (Windows)
+
+Na primeira instalação, a janela de configurações solicita a localização ao
+Windows. Se o acesso for negado, busque cidade ou bairro pelo botão **Buscar**,
+escolha o resultado e confira o ponto no mapa. A busca é feita pelo serviço de
+geocodificação do [Open-Meteo](https://open-meteo.com/en/docs/geocoding-api),
+com dados do GeoNames. Bairros sem cadastro podem não aparecer; nesse caso,
+ajuste latitude e longitude manualmente após conferir o ponto no mapa.
+
+O clima vem do [Open-Meteo](https://open-meteo.com/en/docs) e é consultado no
+máximo a cada 15 minutos, com as coordenadas escolhidas. Quando a rede falha,
+o Estel volta ao brilho por horário. O serviço gratuito é destinado a
+[uso não comercial](https://open-meteo.com/en/terms); desative **Usar clima**
+se essa condição não se aplicar. O serviço disponibiliza os dados sob CC BY 4.0.
+
+Se há uma janela perto, informe sua orientação pela bússola do celular e se a
+tela fica de frente, de costas ou de lado para ela. O cálculo usa a posição
+aproximada do sol e a radiação direta para compensar reflexos, até um limite
+pequeno. A câmera, quando funciona, sempre tem prioridade sobre essa estimativa.
+Nascer e pôr do sol da localização continuam definindo a curva de cor.
+
+A janela de configurações usa quatro cenas ilustradas derivadas do mascote
+original do [portfólio do Denis](https://github.com/DenisCDev/portfolio-site),
+preservando a identidade descrita em `astro/MASCOTES.md` naquele repositório.
 
 ---
 

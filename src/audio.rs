@@ -124,6 +124,10 @@ impl Audio {
         self.noise_player.stop();
         self.noise_player.set_volume(0.0);
     }
+
+    pub fn is_silent(&self) -> bool {
+        self.active_color.is_none() && self.current <= 1e-4
+    }
 }
 
 /// Raised-cosine from `from` to `to` over [`FADE_SECS`]. Independent of
