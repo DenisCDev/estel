@@ -82,6 +82,9 @@ pub fn status_label(config: &Config) -> String {
     if !config.weather_enabled {
         return "Consulta de clima desligada.".into();
     }
+    if config.preserve_colors() {
+        return "Clima em pausa enquanto as cores do monitor estão preservadas.".into();
+    }
     let path = Config::config_path().with_file_name("weather-status.json");
     let status = std::fs::read(path)
         .ok()

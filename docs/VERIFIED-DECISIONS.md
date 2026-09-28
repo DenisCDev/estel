@@ -23,16 +23,57 @@ Regras de produto que prevalecem sobre o resto:
 - HDR = gama no-op. Overlay cobre.
 - A rampa é volátil (resolução, sleep, UAC). Reaplicar no tick.
 - **Restore-on-next-launch:** arquivo `dirty` no diretório de config. Se o
-  processo morreu, a próxima subida escreve identidade *antes* do snapshot.
+  processo morreu enquanto ajustava a tela, a próxima subida escreve identidade
+  *antes* do snapshot. O modo de cores preservadas também recupera uma sessão
+  anterior incompleta antes de manter a tela sem ajustes.
 - Overlay: `WS_EX_LAYERED | TRANSPARENT | NOACTIVATE | TOOLWINDOW`, PeekMessage
   filtrado no HWND do overlay. `WM_DISPLAYCHANGE` redimensiona.
 - DDC: `SetMonitorBrightness`. Restore é idempotente (`DestroyPhysicalMonitor`
   uma vez). `park()` devolve o backlight sem soltar o handle (Pausar).
+- Em várias telas, DDC e gama só aplicam o alvo quando todas as saídas
+  detectadas aceitam o ajuste. Uma falha parcial ou mudança de conexão
+  desativa o caminho físico até o próximo início; a sobreposição cobre todo o
+  desktop virtual. A restauração dos monitores afetados é repetida enquanto
+  houver falha transitória. Isso sincroniza o ajuste enviado pelo Estel, mas
+  não substitui a calibração de fábrica/OSD de cada painel.
 
 ## CCT e curva
 
 - Tanner Helland, sem crate. Interpolação de CCT em **mired**. Smoothstep em
   toda rampa. Engine pura, testável, sem chamada de OS.
+
+## Trabalho com cores e daltonismo
+
+- A [International Color Consortium](https://www.color.org/displaycalibration/)
+  explica que calibração e perfil do monitor são usados para reprodução
+  consistente de cores. Ela também registra que alterações na iluminação do
+  ambiente podem reduzir a precisão. Por isso, **Trabalho com cores** restaura
+  a gama e o brilho capturados antes do Estel e suspende a sobreposição.
+- O [National Eye Institute](https://www.nei.nih.gov/eye-health-information/eye-conditions-and-diseases/color-blindness)
+  descreve diferentes tipos de deficiência de visão de cores e afirma que não
+  existe cura para a forma hereditária. Sem conhecer o tipo e as necessidades
+  da pessoa, o Estel não aplica uma transformação global que alegue corrigir
+  daltonismo. **Tenho daltonismo** preserva a imagem original.
+- Um [estudo experimental publicado em Scientific Reports (2022)](https://pubmed.ncbi.nlm.nih.gov/35778454/)
+  não encontrou melhora significativa de discriminação de cores com os filtros
+  ópticos avaliados em participantes com deficiência de visão vermelho-verde.
+  O estudo testou óculos, não filtros digitais; ele reforça a cautela, mas não
+  demonstra que todo recurso digital seja ineficaz.
+- A [W3C WCAG 2.2, critério 1.4.1](https://www.w3.org/WAI/WCAG22/Understanding/use-of-color)
+  recomenda não usar cor como único sinal de informação. Os botões do Estel
+  mostram o estado por texto (ligado/desligado, sim/não), além da cor.
+- As duas escolhas são independentes e persistentes. Enquanto uma delas estiver
+  ativa, os ajustes de tela do Estel, inclusive brilho por câmera, ficam em
+  pausa. Som e configuração continuam. Desmarcar ambas retoma os ajustes.
+
+## Atualização opcional
+
+- A [API oficial de releases do GitHub](https://docs.github.com/en/rest/releases/releases)
+  informa a última versão publicada e os ativos. Um commit no repositório, sem
+  release, não é oferecido como atualização.
+- O [campo SHA-256 do ativo](https://docs.github.com/en/rest/releases/assets)
+  é comparado ao instalador baixado, junto com nome, origem e tamanho. O Estel
+  só abre o assistente após o clique do usuário e a verificação completa.
 
 ## Áudio
 

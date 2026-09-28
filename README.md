@@ -61,17 +61,42 @@ Na bandeja:
 - **Ruído noturno** — rosa de noite, marrom perto do sono; começa e termina em fade de 4 s; volume tem teto duro
 - **Pausar** — devolve a tela agora, sem fechar
 - **Configurações…** — acordar, dormir, volume, localização
-- **Buscar atualização** — mostra a versão instalada e abre a versão mais recente
+- **Buscar atualização** — abre os ajustes e verifica a versão publicada no GitHub
 - **Fechar Estel** — restaura gama e backlight
 
 Primeira execução grava `%APPDATA%\condado\estel\config\config.toml`.
 
 ### Atualizar ou remover
 
-Para atualizar, baixe o instalador mais recente pelo mesmo botão acima e abra o
-arquivo. Ele substitui o aplicativo e preserva suas configurações. Para remover,
+O Estel verifica se há uma versão publicada mais recente ao iniciar e mostra o
+aviso no menu da bandeja. Nos ajustes, **Atualizar agora** baixa o instalador,
+confere tamanho e SHA-256 e abre o assistente do Windows. A instalação só começa
+quando você avança no assistente e preserva suas configurações. Para remover,
 abra **Configurações do Windows → Aplicativos → Aplicativos instalados**, procure
 por **Estel** e escolha **Desinstalar**.
+
+### Cores fiéis e daltonismo
+
+Nos ajustes, marque **Trabalho com cores** ou **Tenho daltonismo** para preservar
+as cores originais do monitor. Enquanto qualquer uma dessas opções estiver
+ligada, o Estel pausa os ajustes de cor e brilho da tela; o som opcional pode
+continuar. Não há diagnóstico nem filtro universal para daltonismo. As fontes e
+os limites dessa escolha estão em [decisões verificadas](docs/VERIFIED-DECISIONS.md).
+
+Se a câmera falhar depois de medir a luz, o Estel mantém a última leitura por
+até cinco minutos. Depois volta gradualmente ao brilho calculado pelo horário;
+mudanças automáticas de brilho são limitadas a 6 pontos percentuais por ajuste.
+Mudanças automáticas de cor também são graduais. Alterar apenas o intervalo de
+leitura da câmera não descarta a medição atual. O menu da bandeja informa quando
+a última leitura está sendo mantida.
+
+Com duas telas, o Estel só usa o controle físico de brilho e a gama quando
+todas aceitam o ajuste. Se uma não responder ou a conexão dos monitores mudar,
+uma sobreposição comum mantém os ajustes sincronizados nessa sessão. Brilho e
+cores percebidos ainda dependem da calibração própria de cada monitor.
+Se uma sessão antiga terminou abruptamente com vários monitores, o registro
+anterior não identifica cada tela. O Estel preserva esse registro e usa a
+sobreposição, sem arriscar restaurar o brilho físico na tela errada.
 
 ### Android
 

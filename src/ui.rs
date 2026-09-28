@@ -2,6 +2,7 @@
 
 use std::process::{Command, Stdio};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::time::{Duration, Instant};
 
@@ -16,6 +17,7 @@ use winit::platform::windows::EventLoopBuilderExtWindows;
 
 use crate::config::{Config, Intensity, ScreenWindowRelation};
 use crate::location;
+use crate::update::{self, DownloadedInstaller, Release};
 use crate::weather::{self, Place};
 
 const PAPER: Color32 = Color32::from_rgb(255, 250, 238);
@@ -30,6 +32,28 @@ const BLUE: Color32 = Color32::from_rgb(159, 222, 251);
 const PEACH: Color32 = Color32::from_rgb(255, 204, 148);
 const LILAC: Color32 = Color32::from_rgb(222, 194, 255);
 const HOT_PINK: Color32 = Color32::from_rgb(229, 58, 115);
+const DEEP_GREEN: Color32 = Color32::from_rgb(18, 105, 62);
+
+enum UpdateState {
+    Checking(Receiver<Result<Option<Release>, String>>),
+    Current,
+    Available(Release),
+    Downloading {
+        rx: Receiver<Result<DownloadedInstaller, String>>,
+        downloaded: Arc<AtomicU64>,
+        total: u64,
+    },
+    Launched,
+    Error(String),
+}
+
+fn check_updates() -> UpdateState {
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(update::check_latest());
+    });
+    UpdateState::Checking(rx)
+}
 
 fn poster_font(size: f32) -> FontId {
     FontId::new(size, FontFamily::Name("poster".into()))
@@ -136,11 +160,13 @@ struct SettingsApp {
     location_request: bool,
     location_scan: Option<Receiver<Result<(f64, f64), String>>>,
     location_error: Option<String>,
+    location_success: bool,
     place_query: String,
     place_search: Option<Receiver<Result<Vec<Place>, String>>>,
     place_results: Vec<Place>,
     place_error: Option<String>,
     selected_place: Option<String>,
+    update_state: UpdateState,
     mascot_sheet: Option<egui::TextureHandle>,
     poster_collage: egui::TextureHandle,
 }
@@ -178,11 +204,13 @@ impl SettingsApp {
             location_request,
             location_scan: None,
             location_error: None,
+            location_success: false,
             place_query: String::new(),
             place_search: None,
             place_results: Vec::new(),
             place_error: None,
             selected_place: None,
+            update_state: check_updates(),
             mascot_sheet,
             poster_collage,
         }
@@ -224,6 +252,7 @@ impl SettingsApp {
     fn start_location_request(&mut self) {
         self.location_request = false;
         self.location_error = None;
+        self.location_success = false;
         match location::request_access() {
             Ok(access) => {
                 let (tx, rx) = mpsc::channel();
@@ -283,7 +312,7 @@ fn poster_button(label: &str, fill: Color32, selected: bool) -> egui::Button<'st
             .color(if selected { Color32::WHITE } else { INK })
             .strong(),
     )
-    .fill(if selected { HOT_PINK } else { fill })
+    .fill(if selected { DEEP_GREEN } else { fill })
     .stroke(Stroke::new(2.0_f32, INK))
     .corner_radius(CornerRadius::same(6))
 }
@@ -302,7 +331,7 @@ fn poster_cover(
             CornerRadius::same(8),
             INK,
         );
-        painter.rect_filled(rect, CornerRadius::same(8), YELLOW);
+        painter.rect_filled(rect, CornerRadius::same(8), MINT);
         painter.rect_stroke(
             rect,
             CornerRadius::same(8),
@@ -341,7 +370,7 @@ fn poster_cover(
             egui::Align2::LEFT_TOP,
             "ESTEL!",
             poster_font(65.0),
-            HOT_PINK,
+            DEEP_GREEN,
         );
         painter.text(
             rect.min + Vec2::new(32.0, 132.0),
@@ -558,6 +587,7 @@ impl eframe::App for SettingsApp {
                     self.cfg.latitude = latitude;
                     self.cfg.longitude = longitude;
                     self.selected_place = None;
+                    self.location_success = true;
                     self.touch();
                     self.flush();
                 }
@@ -593,6 +623,32 @@ impl eframe::App for SettingsApp {
             }
             _ => {}
         }
+        let next_update = match &self.update_state {
+            UpdateState::Checking(rx) => match rx.try_recv() {
+                Ok(Ok(Some(release))) => Some(UpdateState::Available(release)),
+                Ok(Ok(None)) => Some(UpdateState::Current),
+                Ok(Err(error)) => Some(UpdateState::Error(error)),
+                Err(TryRecvError::Disconnected) => Some(UpdateState::Error(
+                    "A busca por atualização foi interrompida. Tente novamente.".into(),
+                )),
+                Err(TryRecvError::Empty) => None,
+            },
+            UpdateState::Downloading { rx, .. } => match rx.try_recv() {
+                Ok(Ok(installer)) => Some(match update::launch_installer(installer) {
+                    Ok(()) => UpdateState::Launched,
+                    Err(error) => UpdateState::Error(error),
+                }),
+                Ok(Err(error)) => Some(UpdateState::Error(error)),
+                Err(TryRecvError::Disconnected) => Some(UpdateState::Error(
+                    "O download foi interrompido. Tente novamente.".into(),
+                )),
+                Err(TryRecvError::Empty) => None,
+            },
+            _ => None,
+        };
+        if let Some(state) = next_update {
+            self.update_state = state;
+        }
         if self.camera_scan_pending {
             match self.camera_scan.try_recv() {
                 Ok(result) => {
@@ -619,6 +675,10 @@ impl eframe::App for SettingsApp {
             || self.camera_scan_pending
             || self.location_scan.is_some()
             || self.place_search.is_some()
+            || matches!(
+                self.update_state,
+                UpdateState::Checking(_) | UpdateState::Downloading { .. }
+            )
         {
             ctx.request_repaint_after(Duration::from_millis(200));
         }
@@ -628,7 +688,7 @@ impl eframe::App for SettingsApp {
                 Frame::new()
                     .fill(INK)
                     .inner_margin(Margin::symmetric(22, 12))
-                    .stroke(Stroke::new(2.0_f32, HOT_PINK)),
+                    .stroke(Stroke::new(2.0_f32, DEEP_GREEN)),
             )
             .show(ctx, |ui| {
                 if let Some(error) = &self.save_error {
@@ -667,8 +727,72 @@ impl eframe::App for SettingsApp {
                 if poster_cover(ui, &self.poster_collage, &mut self.cfg, content_width) {
                     self.touch();
                 }
+                ui.add_space(14.0);
+                Frame::new()
+                    .fill(BLUE)
+                    .stroke(Stroke::new(2.0_f32, INK))
+                    .corner_radius(CornerRadius::same(6))
+                    .inner_margin(Margin::symmetric(16, 10))
+                    .show(ui, |ui| {
+                        ui.set_width(content_width - 32.0);
+                        ui.horizontal_wrapped(|ui| {
+                            ui.label(RichText::new("ATUALIZAÇÕES /").font(poster_font(17.0)).color(INK));
+                            match &self.update_state {
+                                UpdateState::Checking(_) => { ui.label("Verificando versão publicada..."); }
+                                UpdateState::Current => { ui.label("Esta é a versão mais recente."); }
+                                UpdateState::Available(release) => { ui.label(format!("{} disponível", release.version)); }
+                                UpdateState::Downloading { downloaded, total, .. } => {
+                                    let progress = downloaded.load(Ordering::Relaxed);
+                                    if progress >= *total {
+                                        ui.label("Download concluído. Verificando o instalador...");
+                                    } else {
+                                        ui.label(format!("Baixando instalador: {}%", progress * 100 / total));
+                                    }
+                                }
+                                UpdateState::Launched => { ui.label("Instalador aberto. Conclua as etapas na janela do Windows."); }
+                                UpdateState::Error(error) => { ui.label(RichText::new(error).color(Color32::from_rgb(160, 40, 30))); }
+                            }
+                            let action = match &self.update_state {
+                                UpdateState::Current | UpdateState::Error(_) => Some("VERIFICAR DE NOVO"),
+                                UpdateState::Available(_) => Some("ATUALIZAR AGORA"),
+                                _ => None,
+                            };
+                            if let Some(label) = action
+                                && ui.add(egui::Button::new(RichText::new(label).strong()).fill(YELLOW).stroke(Stroke::new(1.5_f32, INK))).clicked() {
+                                    match &self.update_state {
+                                        UpdateState::Available(release) => {
+                                            let release = release.clone();
+                                            let (tx, rx) = mpsc::channel();
+                                            let downloaded = Arc::new(AtomicU64::new(0));
+                                            let progress = downloaded.clone();
+                                            let total = release.size;
+                                            std::thread::spawn(move || {
+                                                let _ = tx.send(update::download_installer(&release, &progress));
+                                            });
+                                            self.update_state = UpdateState::Downloading { rx, downloaded, total };
+                                        }
+                                        _ => self.update_state = check_updates(),
+                                    }
+                            }
+                        });
+                    });
+                ui.add_space(18.0);
+                ui.label(RichText::new("CORES DO SEU JEITO").font(poster_font(23.0)).color(DEEP_GREEN));
+                ui.horizontal_wrapped(|ui| {
+                    if toggle_sticker(ui, &mut self.cfg.color_critical_work, "TRABALHO COM CORES", YELLOW) {
+                        self.touch();
+                    }
+                    if toggle_sticker(ui, &mut self.cfg.color_vision_deficiency, "TENHO DALTONISMO", PINK) {
+                        self.touch();
+                    }
+                });
+                if self.cfg.preserve_colors() {
+                    ui.label("Cores preservadas: o Estel pausa seus ajustes de tela, inclusive brilho automático. O som pode continuar.");
+                } else {
+                    ui.label("Ative uma opção para preservar as cores originais do monitor. O Estel não diagnostica nem corrige daltonismo.");
+                }
                 ui.add_space(32.0);
-                ui.label(RichText::new("SEU MUNDO / SEUS AJUSTES").font(poster_font(28.0)).color(HOT_PINK));
+                ui.label(RichText::new("SEU MUNDO / SEUS AJUSTES").font(poster_font(28.0)).color(DEEP_GREEN));
                 ui.label(RichText::new("Toque nos adesivos e monte a luz do seu jeito. Suave deixa a cor quase neutra para jogos e filmes.").size(14.0).color(INK));
                 ui.add_space(18.0);
 
@@ -720,6 +844,7 @@ impl eframe::App for SettingsApp {
                     if !self.cfg.location_auto {
                         self.location_scan = None;
                         self.location_error = None;
+                        self.location_success = false;
                     }
                     self.touch();
                 }
@@ -728,6 +853,13 @@ impl eframe::App for SettingsApp {
                 } else if let Some(error) = &self.location_error {
                     ui.label(RichText::new(error).size(12.0).color(Color32::from_rgb(160, 40, 30)));
                     ui.hyperlink_to("Permissões de localização do Windows", "ms-settings:privacy-location");
+                } else if self.location_success {
+                    let message = if self.cfg.weather_enabled {
+                        "Localização obtida do Windows. O sol e o clima usam as coordenadas abaixo."
+                    } else {
+                        "Localização obtida do Windows. O sol usa as coordenadas abaixo; o clima está desligado."
+                    };
+                    ui.label(RichText::new(message).size(12.0).color(INK));
                 }
                 ui.add_space(8.0);
                 ui.label("Cidade ou bairro");
@@ -766,6 +898,7 @@ impl eframe::App for SettingsApp {
                     self.cfg.longitude = place.longitude;
                     self.cfg.location_auto = false;
                     self.location_scan = None;
+                    self.location_success = false;
                     self.place_results.clear();
                     self.touch();
                 }
@@ -786,6 +919,7 @@ impl eframe::App for SettingsApp {
                     {
                         self.cfg.location_auto = false;
                         self.location_scan = None;
+                        self.location_success = false;
                         self.selected_place = None;
                         self.touch();
                     }
@@ -797,6 +931,7 @@ impl eframe::App for SettingsApp {
                     {
                         self.cfg.location_auto = false;
                         self.location_scan = None;
+                        self.location_success = false;
                         self.selected_place = None;
                         self.touch();
                     }

@@ -50,7 +50,7 @@ fn run(mut config: Config, config_rx: Receiver<Config>, factor_tx: Sender<Result
     let mut last_error: Option<String> = None;
 
     loop {
-        if !config.ambient_enabled {
+        if !config.ambient_enabled || config.preserve_colors() {
             smoothed = None;
             match config_rx.recv() {
                 Ok(next) => {
@@ -82,7 +82,6 @@ fn run(mut config: Config, config_rx: Receiver<Config>, factor_tx: Sender<Result
                 last_error = None;
             }
             Err(error) => {
-                smoothed = None;
                 if last_error.as_deref() != Some(error.as_str()) {
                     tracing::warn!(%error, "sensor de luz ambiente indisponível");
                 }
@@ -95,14 +94,25 @@ fn run(mut config: Config, config_rx: Receiver<Config>, factor_tx: Sender<Result
 
         match config_rx.recv_timeout(Duration::from_secs(config.ambient_sample_interval_seconds)) {
             Ok(next) => {
+                let reset = smoothing_source_changed(&config, &next);
                 config = next;
-                smoothed = None;
-                last_error = None;
+                if reset {
+                    smoothed = None;
+                    last_error = None;
+                }
             }
             Err(mpsc::RecvTimeoutError::Timeout) => {}
             Err(mpsc::RecvTimeoutError::Disconnected) => return,
         }
     }
+}
+
+fn smoothing_source_changed(old: &Config, new: &Config) -> bool {
+    old.ambient_enabled != new.ambient_enabled
+        || old.ambient_camera_index != new.ambient_camera_index
+        || old.ambient_brightness_min != new.ambient_brightness_min
+        || old.ambient_brightness_max != new.ambient_brightness_max
+        || old.preserve_colors() != new.preserve_colors()
 }
 
 fn sample_luminance_in_helper(camera_index: usize) -> Result<f32, String> {
@@ -350,7 +360,7 @@ fn smooth_factor(previous: Option<f32>, measured: f32, min_factor: f32, max_fact
 mod tests {
     use super::{
         MAX_PIXEL_SAMPLES, factor_for_luminance, frame_luminance, sample_stride, smooth_factor,
-        yuy2_luminance,
+        smoothing_source_changed, yuy2_luminance,
     };
     use crate::config::Config;
 
@@ -392,6 +402,16 @@ mod tests {
                 config.ambient_brightness_max,
             ) <= config.ambient_brightness_max
         );
+    }
+
+    #[test]
+    fn changing_only_camera_interval_keeps_previous_measurement() {
+        let current = Config::default();
+        let mut next = current.clone();
+        next.ambient_sample_interval_seconds = 10;
+        assert!(!smoothing_source_changed(&current, &next));
+        next.ambient_camera_index = current.ambient_camera_index + 1;
+        assert!(smoothing_source_changed(&current, &next));
     }
 
     #[test]
