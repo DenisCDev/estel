@@ -1,10 +1,13 @@
-//! Small settings window. Light, sparse, no animation.
+//! Poster-inspired settings window for the Windows tray app.
 
 use std::process::{Command, Stdio};
+use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::time::{Duration, Instant};
 
-use eframe::egui::{self, Color32, CornerRadius, Frame, Margin, RichText, Stroke, Vec2};
+use eframe::egui::{
+    self, Color32, CornerRadius, FontFamily, FontId, Frame, Margin, RichText, Stroke, Vec2,
+};
 use windows::Win32::Foundation::CloseHandle;
 use windows::Win32::System::Threading::{EVENT_MODIFY_STATE, OpenEventW, SetEvent};
 use windows::core::w;
@@ -15,17 +18,22 @@ use crate::config::{Config, Intensity, ScreenWindowRelation};
 use crate::location;
 use crate::weather::{self, Place};
 
-const PAPER: Color32 = Color32::from_rgb(255, 251, 244);
-const INK: Color32 = Color32::from_rgb(28, 35, 32);
-const MUTED: Color32 = Color32::from_rgb(84, 93, 88);
-const LINE: Color32 = Color32::from_rgb(55, 67, 59);
-const AMBER: Color32 = Color32::from_rgb(20, 113, 63);
-const MINT: Color32 = Color32::from_rgb(220, 239, 218);
-const PINK: Color32 = Color32::from_rgb(255, 227, 235);
-const YELLOW: Color32 = Color32::from_rgb(255, 241, 185);
-const BLUE: Color32 = Color32::from_rgb(221, 239, 251);
-const PEACH: Color32 = Color32::from_rgb(255, 229, 207);
-const LILAC: Color32 = Color32::from_rgb(239, 229, 255);
+const PAPER: Color32 = Color32::from_rgb(255, 250, 238);
+const INK: Color32 = Color32::from_rgb(32, 49, 55);
+const MUTED: Color32 = Color32::from_rgb(73, 85, 88);
+const LINE: Color32 = Color32::from_rgb(32, 49, 55);
+const AMBER: Color32 = Color32::from_rgb(17, 110, 70);
+const MINT: Color32 = Color32::from_rgb(189, 237, 181);
+const PINK: Color32 = Color32::from_rgb(255, 181, 207);
+const YELLOW: Color32 = Color32::from_rgb(255, 233, 119);
+const BLUE: Color32 = Color32::from_rgb(159, 222, 251);
+const PEACH: Color32 = Color32::from_rgb(255, 204, 148);
+const LILAC: Color32 = Color32::from_rgb(222, 194, 255);
+const HOT_PINK: Color32 = Color32::from_rgb(229, 58, 115);
+
+fn poster_font(size: f32) -> FontId {
+    FontId::new(size, FontFamily::Name("poster".into()))
+}
 
 pub fn run(initial: Config, tx: Sender<Config>) -> eframe::Result {
     let avatar = image::load_from_memory_with_format(
@@ -43,8 +51,8 @@ pub fn run(initial: Config, tx: Sender<Config>) -> eframe::Result {
                 width: 64,
                 height: 64,
             })
-            .with_inner_size([760.0, 850.0])
-            .with_min_inner_size([700.0, 650.0])
+            .with_inner_size([1020.0, 850.0])
+            .with_min_inner_size([820.0, 650.0])
             .with_resizable(true)
             .with_maximize_button(false),
         event_loop_builder: Some(Box::new(|builder| {
@@ -60,20 +68,43 @@ pub fn run(initial: Config, tx: Sender<Config>) -> eframe::Result {
         "Estel",
         options,
         Box::new(move |cc| {
+            let mut fonts = egui::FontDefinitions::default();
+            fonts.font_data.insert(
+                "fredoka".into(),
+                Arc::new(egui::FontData::from_static(include_bytes!(
+                    "../assets/Fredoka[wdth,wght].ttf"
+                ))),
+            );
+            fonts.font_data.insert(
+                "lilita".into(),
+                Arc::new(egui::FontData::from_static(include_bytes!(
+                    "../assets/LilitaOne-Regular.ttf"
+                ))),
+            );
+            fonts
+                .families
+                .entry(FontFamily::Proportional)
+                .or_default()
+                .insert(0, "fredoka".into());
+            fonts.families.insert(
+                FontFamily::Name("poster".into()),
+                vec!["lilita".into(), "fredoka".into()],
+            );
+            cc.egui_ctx.set_fonts(fonts);
             let mut visuals = egui::Visuals::light();
             visuals.panel_fill = PAPER;
             visuals.window_fill = PAPER;
             visuals.override_text_color = Some(INK);
-            visuals.widgets.inactive.corner_radius = CornerRadius::same(12);
-            visuals.widgets.hovered.corner_radius = CornerRadius::same(12);
-            visuals.widgets.active.corner_radius = CornerRadius::same(12);
+            visuals.widgets.inactive.corner_radius = CornerRadius::same(6);
+            visuals.widgets.hovered.corner_radius = CornerRadius::same(6);
+            visuals.widgets.active.corner_radius = CornerRadius::same(6);
             visuals.widgets.inactive.bg_fill = Color32::WHITE;
-            visuals.widgets.inactive.bg_stroke = Stroke::new(1.0_f32, LINE);
-            visuals.selection.bg_fill = AMBER;
+            visuals.widgets.inactive.bg_stroke = Stroke::new(1.5_f32, LINE);
+            visuals.selection.bg_fill = HOT_PINK;
             cc.egui_ctx.set_visuals(visuals);
 
             let mut style = (*cc.egui_ctx.style()).clone();
-            style.spacing.item_spacing = Vec2::new(10.0, 12.0);
+            style.spacing.item_spacing = Vec2::new(10.0, 10.0);
             style.spacing.window_margin = Margin::same(18);
             cc.egui_ctx.set_style(style);
 
@@ -81,6 +112,7 @@ pub fn run(initial: Config, tx: Sender<Config>) -> eframe::Result {
                 initial,
                 tx,
                 load_mascot_sheet(&cc.egui_ctx),
+                load_poster_collage(&cc.egui_ctx),
             )))
         }),
     )
@@ -110,10 +142,16 @@ struct SettingsApp {
     place_error: Option<String>,
     selected_place: Option<String>,
     mascot_sheet: Option<egui::TextureHandle>,
+    poster_collage: egui::TextureHandle,
 }
 
 impl SettingsApp {
-    fn new(cfg: Config, tx: Sender<Config>, mascot_sheet: Option<egui::TextureHandle>) -> Self {
+    fn new(
+        cfg: Config,
+        tx: Sender<Config>,
+        mascot_sheet: Option<egui::TextureHandle>,
+        poster_collage: egui::TextureHandle,
+    ) -> Self {
         let location_request = cfg.location_auto;
         let (wake_h, wake_m) = split_hhmm(&cfg.wake);
         let (bed_h, bed_m) = split_hhmm(&cfg.bed);
@@ -146,6 +184,7 @@ impl SettingsApp {
             place_error: None,
             selected_place: None,
             mascot_sheet,
+            poster_collage,
         }
     }
 
@@ -225,61 +264,223 @@ fn load_mascot_sheet(ctx: &egui::Context) -> Option<egui::TextureHandle> {
     ))
 }
 
-fn poster(
-    ui: &mut egui::Ui,
-    sheet: &egui::TextureHandle,
-    index: usize,
-    fill: Color32,
-    title: &str,
-    caption: &str,
-    width: f32,
-) {
-    let x = (index % 2) as f32 * 0.5;
-    let y = (index / 2) as f32 * 0.5;
-    let uv = egui::Rect::from_min_max(
-        egui::pos2(x + 0.005, y + 0.005),
-        egui::pos2(x + 0.495, y + 0.495),
-    );
-    let offsets = [0.0, 20.0, 5.0, 26.0];
-    let scales = [0.94, 0.82, 1.0, 0.85];
-    ui.vertical(|ui| {
-        ui.set_width(width);
-        ui.add_space(offsets[index]);
-        ui.label(
-            RichText::new(format!("0{} / ESTEL", index + 1))
-                .size(11.0)
-                .color(AMBER)
-                .strong(),
-        );
-        let (rect, _) = ui.allocate_exact_size(Vec2::new(width, width), egui::Sense::hover());
-        let painter = ui.painter();
-        let center = rect.center() + Vec2::new(4.0, 5.0);
-        painter.circle_filled(center, width * 0.40, fill);
-        painter.circle_filled(rect.min + Vec2::new(width * 0.18, width * 0.15), 4.0, AMBER);
-        painter.circle_filled(rect.max - Vec2::new(width * 0.12, width * 0.24), 3.0, AMBER);
-        let side = width * scales[index];
-        let art = egui::Rect::from_center_size(center, Vec2::splat(side));
-        painter.image(sheet.id(), art, uv, Color32::WHITE);
-        ui.label(RichText::new(title).size(17.0).color(INK).strong());
-        ui.label(RichText::new(caption).size(11.0).color(MUTED));
-    });
+fn load_poster_collage(ctx: &egui::Context) -> egui::TextureHandle {
+    let image = image::load_from_memory_with_format(
+        include_bytes!("../assets/estel-poster-collage.png"),
+        image::ImageFormat::Png,
+    )
+    .expect("A arte do Estel está inválida")
+    .into_rgba8();
+    let size = [image.width() as usize, image.height() as usize];
+    let color = egui::ColorImage::from_rgba_unmultiplied(size, image.as_raw());
+    ctx.load_texture("estel-poster-collage", color, egui::TextureOptions::LINEAR)
 }
 
-fn card<R>(ui: &mut egui::Ui, fill: Color32, body: impl FnOnce(&mut egui::Ui) -> R) -> R {
+fn poster_button(label: &str, fill: Color32, selected: bool) -> egui::Button<'static> {
+    egui::Button::new(
+        RichText::new(label.to_owned())
+            .size(16.0)
+            .color(if selected { Color32::WHITE } else { INK })
+            .strong(),
+    )
+    .fill(if selected { HOT_PINK } else { fill })
+    .stroke(Stroke::new(2.0_f32, INK))
+    .corner_radius(CornerRadius::same(6))
+}
+
+fn poster_cover(
+    ui: &mut egui::Ui,
+    collage: &egui::TextureHandle,
+    cfg: &mut Config,
+    width: f32,
+) -> bool {
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(width, 375.0), egui::Sense::hover());
+    {
+        let painter = ui.painter();
+        painter.rect_filled(
+            rect.translate(Vec2::new(6.0, 6.0)),
+            CornerRadius::same(8),
+            INK,
+        );
+        painter.rect_filled(rect, CornerRadius::same(8), YELLOW);
+        painter.rect_stroke(
+            rect,
+            CornerRadius::same(8),
+            Stroke::new(3.0_f32, INK),
+            egui::StrokeKind::Inside,
+        );
+        painter.circle_filled(rect.min + Vec2::new(35.0, 34.0), 7.0, HOT_PINK);
+        painter.circle_filled(rect.min + Vec2::new(55.0, 34.0), 7.0, BLUE);
+        painter.circle_filled(rect.min + Vec2::new(75.0, 34.0), 7.0, MINT);
+        painter.text(
+            rect.min + Vec2::new(98.0, 24.0),
+            egui::Align2::LEFT_TOP,
+            format!("01 / ESTEL {}", env!("CARGO_PKG_VERSION")),
+            poster_font(16.0),
+            INK,
+        );
+        let art = egui::Rect::from_min_size(
+            rect.min + Vec2::new(width * 0.30, 30.0),
+            Vec2::new(width * 0.68, 315.0),
+        );
+        painter.image(
+            collage.id(),
+            art,
+            egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
+            Color32::WHITE,
+        );
+        painter.text(
+            rect.min + Vec2::new(30.0, 65.0),
+            egui::Align2::LEFT_TOP,
+            "ESTEL!",
+            poster_font(65.0),
+            Color32::WHITE,
+        );
+        painter.text(
+            rect.min + Vec2::new(27.0, 61.0),
+            egui::Align2::LEFT_TOP,
+            "ESTEL!",
+            poster_font(65.0),
+            HOT_PINK,
+        );
+        painter.text(
+            rect.min + Vec2::new(32.0, 132.0),
+            egui::Align2::LEFT_TOP,
+            "SUA LUZ, SUAS REGRAS",
+            poster_font(22.0),
+            INK,
+        );
+        painter.text(
+            rect.min + Vec2::new(32.0, 165.0),
+            egui::Align2::LEFT_TOP,
+            "A câmera sente o ambiente.",
+            FontId::proportional(16.0),
+            INK,
+        );
+        painter.text(
+            rect.min + Vec2::new(32.0, 186.0),
+            egui::Align2::LEFT_TOP,
+            "O sol e o clima completam.",
+            FontId::proportional(16.0),
+            INK,
+        );
+        painter.text(
+            rect.min + Vec2::new(31.0, 289.0),
+            egui::Align2::LEFT_TOP,
+            "ESCOLHA A FORÇA DA COR",
+            poster_font(17.0),
+            INK,
+        );
+    }
+    let mut changed = false;
+    let camera_label = if cfg.ambient_enabled {
+        "USAR CÂMERA: SIM"
+    } else {
+        "USAR CÂMERA: NÃO"
+    };
+    if ui
+        .place(
+            egui::Rect::from_min_size(rect.min + Vec2::new(30.0, 220.0), Vec2::new(222.0, 48.0)),
+            poster_button(camera_label, MINT, cfg.ambient_enabled),
+        )
+        .clicked()
+    {
+        cfg.ambient_enabled = !cfg.ambient_enabled;
+        changed = true;
+    }
+    for (index, (intensity, label)) in [
+        (Intensity::Alta, "ALTA"),
+        (Intensity::Media, "MÉDIA"),
+        (Intensity::Suave, "SUAVE"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let y = [318.0, 325.0, 312.0][index];
+        let selected = cfg.intensity == intensity;
+        if ui
+            .place(
+                egui::Rect::from_min_size(
+                    rect.min + Vec2::new(30.0 + index as f32 * 119.0, y),
+                    Vec2::new(108.0, 42.0),
+                ),
+                poster_button(label, PINK, selected),
+            )
+            .clicked()
+            && !selected
+        {
+            cfg.intensity = intensity;
+            changed = true;
+        }
+    }
+    let weather_label = if cfg.weather_enabled {
+        "USAR CLIMA: SIM"
+    } else {
+        "USAR CLIMA: NÃO"
+    };
+    if ui
+        .place(
+            egui::Rect::from_min_size(
+                rect.min + Vec2::new(width - 212.0, 315.0),
+                Vec2::new(182.0, 42.0),
+            ),
+            poster_button(weather_label, BLUE, cfg.weather_enabled),
+        )
+        .clicked()
+    {
+        cfg.weather_enabled = !cfg.weather_enabled;
+        changed = true;
+    }
+    changed
+}
+
+fn card<R>(
+    ui: &mut egui::Ui,
+    fill: Color32,
+    sheet: Option<&egui::TextureHandle>,
+    index: usize,
+    body: impl FnOnce(&mut egui::Ui) -> R,
+) -> R {
     let width = ui.available_width();
-    ui.vertical(|ui| {
-        ui.set_width(width);
-        ui.add_space(8.0);
-        let (accent, _) = ui.allocate_exact_size(Vec2::new(52.0, 6.0), egui::Sense::hover());
-        ui.painter()
-            .rect_filled(accent, CornerRadius::same(3), fill);
-        ui.add_space(7.0);
-        let result = body(ui);
-        ui.add_space(23.0);
-        ui.separator();
-        result
-    })
-    .inner
+    let shown = Frame::new()
+        .fill(fill)
+        .stroke(Stroke::new(2.5_f32, INK))
+        .corner_radius(CornerRadius::same(7))
+        .inner_margin(Margin::same(20))
+        .shadow(egui::Shadow {
+            offset: [5, 5],
+            blur: 0,
+            spread: 0,
+            color: INK,
+        })
+        .show(ui, |ui| {
+            ui.set_width((width - 40.0).max(0.0));
+            let result = body(ui);
+            ui.add_space(66.0);
+            result
+        });
+    let corner = shown.response.rect.right_bottom();
+    let footer = shown.response.rect.left_bottom();
+    ui.painter().text(
+        footer + Vec2::new(31.0, -27.0),
+        egui::Align2::LEFT_CENTER,
+        "ESTEL / LUZ BOA",
+        poster_font(13.0),
+        INK,
+    );
+    ui.painter()
+        .circle_filled(footer + Vec2::new(20.0, -27.0), 4.0, HOT_PINK);
+    if let Some(sheet) = sheet {
+        let x = (index % 2) as f32 * 0.5;
+        let y = (index / 2) as f32 * 0.5;
+        let uv = egui::Rect::from_min_max(
+            egui::pos2(x + 0.005, y + 0.005),
+            egui::pos2(x + 0.495, y + 0.495),
+        );
+        let art = egui::Rect::from_min_size(corner - Vec2::new(98.0, 98.0), Vec2::splat(86.0));
+        ui.painter().image(sheet.id(), art, uv, Color32::WHITE);
+    }
+    shown.inner
 }
 
 fn signal_config_changed() -> bool {
@@ -425,75 +626,54 @@ impl eframe::App for SettingsApp {
         egui::TopBottomPanel::bottom("save-status")
             .frame(
                 Frame::new()
-                    .fill(MINT)
+                    .fill(INK)
                     .inner_margin(Margin::symmetric(22, 12))
-                    .stroke(Stroke::new(1.0_f32, LINE)),
+                    .stroke(Stroke::new(2.0_f32, HOT_PINK)),
             )
             .show(ctx, |ui| {
                 if let Some(error) = &self.save_error {
-                    ui.label(
-                        RichText::new(error)
-                            .size(12.0)
-                            .color(Color32::from_rgb(160, 40, 30)),
-                    );
+                    ui.label(RichText::new(error).size(12.0).color(YELLOW));
                 } else if self.dirty {
-                    ui.label(RichText::new("Salvando ajustes...").size(12.0).color(INK));
+                    ui.label(
+                        RichText::new("Salvando ajustes...")
+                            .size(12.0)
+                            .color(Color32::WHITE),
+                    );
                 } else if !self.status.is_empty() {
-                    ui.label(RichText::new(&self.status).size(12.0).color(AMBER).strong());
+                    ui.label(
+                        RichText::new(&self.status)
+                            .size(12.0)
+                            .color(YELLOW)
+                            .strong(),
+                    );
                 } else {
                     ui.label(
-                        RichText::new("Ajustes salvos automaticamente.")
-                            .size(12.0)
-                            .color(MUTED),
+                        RichText::new("ESTEL / ajustes salvos automaticamente")
+                            .size(13.0)
+                            .color(Color32::WHITE),
                     );
                 }
             });
 
         egui::CentralPanel::default()
-            .frame(Frame::new().fill(PAPER).inner_margin(Margin::same(28)))
+            .frame(Frame::new().fill(PAPER).inner_margin(Margin::same(25)))
             .show(ctx, |ui| {
-                let content_width = (ui.available_width() - 16.0).max(0.0);
+                let content_width = (ui.available_width() - 14.0).max(0.0);
                 egui::ScrollArea::vertical()
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
                 ui.set_width(content_width);
-                ui.label(RichText::new("Estel: seu cantinho de luz").size(32.0).color(INK).strong());
-                ui.label(RichText::new("Brilho, cor e clima no ritmo do seu ambiente.").size(16.0).color(MUTED));
-                ui.add_space(18.0);
-                if let Some(sheet) = &self.mascot_sheet {
-                    let width = (content_width - 36.0) / 4.0;
-                    ui.horizontal(|ui| {
-                        poster(ui, sheet, 0, YELLOW, "Claridade", "a luz do seu dia", width);
-                        poster(ui, sheet, 1, PINK, "Seu lugar", "sol na sua cidade", width);
-                        poster(ui, sheet, 2, PEACH, "Janela", "reflexos sob cuidado", width);
-                        poster(ui, sheet, 3, BLUE, "Câmera", "o ambiente decide", width);
-                    });
-                }
-                ui.add_space(20.0);
-                ui.label(RichText::new("Personalize cada detalhe logo abaixo.").size(13.0).color(INK).strong());
-                ui.add_space(14.0);
-
-                card(ui, PINK, |ui| {
-                section(ui, "01  /  INTENSIDADE");
-                let mut intensity_changed = false;
-                ui.horizontal(|ui| {
-                    intensity_changed |= intensity_chip(ui, &mut self.cfg.intensity, Intensity::Alta, "Alta");
-                    intensity_changed |= intensity_chip(ui, &mut self.cfg.intensity, Intensity::Media, "Média");
-                    intensity_changed |= intensity_chip(ui, &mut self.cfg.intensity, Intensity::Suave, "Suave");
-                });
-                if intensity_changed {
+                let sticker_sheet = self.mascot_sheet.clone();
+                if poster_cover(ui, &self.poster_collage, &mut self.cfg, content_width) {
                     self.touch();
                 }
-                ui.add_space(6.0);
-                ui.label(
-                    RichText::new("Suave deixa a cor quase neutra — útil em jogo ou filme.")
-                        .size(12.0)
-                        .color(MUTED),
-                );
-                });
+                ui.add_space(32.0);
+                ui.label(RichText::new("SEU MUNDO / SEUS AJUSTES").font(poster_font(28.0)).color(HOT_PINK));
+                ui.label(RichText::new("Toque nos adesivos e monte a luz do seu jeito. Suave deixa a cor quase neutra para jogos e filmes.").size(14.0).color(INK));
                 ui.add_space(18.0);
 
-                card(ui, YELLOW, |ui| {
+                ui.columns(2, |columns| {
+                card(&mut columns[0], YELLOW, sticker_sheet.as_ref(), 0, |ui| {
                 section(ui, "02  /  SEU DIA");
                 if time_row(ui, "Acordar", &mut self.wake_h, &mut self.wake_m) {
                     self.touch();
@@ -503,23 +683,23 @@ impl eframe::App for SettingsApp {
                 }
                 ui.label(RichText::new("O sol da sua cidade ajuda a escolher quando a tela fica mais quentinha.").size(12.0).color(MUTED));
                 });
-                ui.add_space(18.0);
 
-                card(ui, BLUE, |ui| {
+                columns[1].add_space(34.0);
+                card(&mut columns[1], BLUE, sticker_sheet.as_ref(), 3, |ui| {
                 section(ui, "03  /  SOM DE FUNDO");
-                if ui
-                    .checkbox(&mut self.cfg.noise_enabled, "Ruído noturno (rosa / marrom)")
-                    .changed()
-                {
+                if toggle_sticker(ui, &mut self.cfg.noise_enabled, "RUÍDO NOTURNO", PINK) {
                     self.touch();
                 }
+                ui.label(RichText::new("Rosa ou marrom, só durante a noite.").size(13.0).color(INK));
                 ui.add_space(4.0);
-                ui.label(RichText::new("Volume").size(13.0).color(INK));
-                let vol = ui.add(
-                    egui::Slider::new(&mut self.cfg.max_volume, 0.0..=0.70)
+                ui.label(RichText::new(format!("VOLUME MÁXIMO / {:.0}%", self.cfg.max_volume * 100.0)).font(poster_font(17.0)).color(INK));
+                let slider_width = ui.available_width() * 0.78;
+                let vol = ui.scope(|ui| {
+                    ui.spacing_mut().slider_width = slider_width;
+                    ui.add(egui::Slider::new(&mut self.cfg.max_volume, 0.0..=0.70)
                         .show_value(false)
-                        .trailing_fill(true),
-                );
+                        .trailing_fill(true))
+                }).inner;
                 if vol.changed() {
                     self.touch();
                 }
@@ -529,14 +709,12 @@ impl eframe::App for SettingsApp {
                         .color(MUTED),
                 );
                 });
-                ui.add_space(18.0);
+                });
+                ui.add_space(30.0);
 
-                card(ui, MINT, |ui| {
+                card(ui, MINT, sticker_sheet.as_ref(), 1, |ui| {
                 section(ui, "04  /  SEU LUGAR");
-                if ui
-                    .checkbox(&mut self.cfg.location_auto, "Obter localização do Windows ao abrir estas configurações")
-                    .changed()
-                {
+                if toggle_sticker(ui, &mut self.cfg.location_auto, "LOCALIZAÇÃO DO WINDOWS", YELLOW) {
                     self.location_request = self.cfg.location_auto;
                     self.selected_place = None;
                     if !self.cfg.location_auto {
@@ -554,9 +732,13 @@ impl eframe::App for SettingsApp {
                 ui.add_space(8.0);
                 ui.label("Cidade ou bairro");
                 ui.horizontal(|ui| {
-                    ui.add(egui::TextEdit::singleline(&mut self.place_query).hint_text("Ex.: Campinas, São Paulo"));
+                    if ui.add_sized([420.0, 42.0], egui::TextEdit::singleline(&mut self.place_query).font(FontId::proportional(16.0)).hint_text("Ex.: Campinas, São Paulo")).changed() {
+                        self.place_results.clear();
+                        self.place_error = None;
+                        self.place_search = None;
+                    }
                     let valid = (3..=100).contains(&self.place_query.trim().chars().count());
-                    if ui.add_enabled(valid && self.place_search.is_none(), egui::Button::new("Buscar"))
+                    if ui.add_enabled(valid && self.place_search.is_none(), egui::Button::new(RichText::new("BUSCAR").size(16.0).color(INK).strong()).fill(PINK).stroke(Stroke::new(2.0_f32, INK)).corner_radius(CornerRadius::same(5)).min_size(Vec2::new(120.0, 42.0)))
                         .clicked() {
                         self.start_place_search();
                     }
@@ -569,9 +751,13 @@ impl eframe::App for SettingsApp {
                 }
                 let mut selected_place = None;
                 for (index, place) in self.place_results.iter().enumerate() {
-                    if ui.button(place.label()).clicked() {
-                        selected_place = Some(index);
-                    }
+                    ui.horizontal(|ui| {
+                        ui.add_space((index % 3) as f32 * 18.0);
+                        let color = [PINK, YELLOW, BLUE][index % 3];
+                        if ui.add(egui::Button::new(RichText::new(place.label()).size(15.0).color(INK)).fill(color).stroke(Stroke::new(1.5_f32, INK)).corner_radius(CornerRadius::same(5))).clicked() {
+                            selected_place = Some(index);
+                        }
+                    });
                 }
                 if let Some(index) = selected_place {
                     let place = &self.place_results[index];
@@ -625,10 +811,11 @@ impl eframe::App for SettingsApp {
                 ui.hyperlink_to("Ver o ponto no mapa; copie as coordenadas se quiser mais precisão", map_url);
                 });
 
-                ui.add_space(18.0);
-                card(ui, PEACH, |ui| {
+                ui.add_space(30.0);
+                ui.columns(2, |columns| {
+                card(&mut columns[0], PEACH, sticker_sheet.as_ref(), 2, |ui| {
                 section(ui, "05  /  SOL E JANELA");
-                if ui.checkbox(&mut self.cfg.weather_enabled, "Usar clima para ajustar brilho sem câmera").changed() {
+                if toggle_sticker(ui, &mut self.cfg.weather_enabled, "CLIMA SEM CÂMERA", BLUE) {
                     self.touch();
                 }
                 ui.label(RichText::new(weather::status_label(&self.cfg)).size(12.0).color(MUTED));
@@ -636,7 +823,7 @@ impl eframe::App for SettingsApp {
                     ctx.request_repaint_after(Duration::from_secs(1));
                 }
                 ui.label(RichText::new("Envia as coordenadas ao Open-Meteo a cada 15 minutos. Serviço gratuito para uso não comercial; sem rede, mantém o horário.").size(12.0).color(MUTED));
-                if ui.checkbox(&mut self.cfg.window_near, "Há uma janela perto da tela").changed() {
+                if toggle_sticker(ui, &mut self.cfg.window_near, "JANELA PERTO DA TELA", YELLOW) {
                     self.touch();
                 }
                 if self.cfg.window_near {
@@ -674,21 +861,10 @@ impl eframe::App for SettingsApp {
                 }
                 });
 
-                ui.add_space(18.0);
-                card(ui, LILAC, |ui| {
+                columns[1].add_space(38.0);
+                card(&mut columns[1], LILAC, sticker_sheet.as_ref(), 3, |ui| {
                 section(ui, "06  /  LUZ AMBIENTE");
-                let ambient_changed = ui
-                    .scope(|ui| {
-                        ui.style_mut().visuals.widgets.inactive.bg_fill = PAPER;
-                        ui.style_mut().visuals.widgets.inactive.bg_stroke =
-                            Stroke::new(1.5_f32, INK);
-                        ui.checkbox(
-                            &mut self.cfg.ambient_enabled,
-                            "Ajustar brilho pela luz do ambiente",
-                        )
-                        .changed()
-                    })
-                    .inner;
+                let ambient_changed = toggle_sticker(ui, &mut self.cfg.ambient_enabled, "BRILHO PELA CÂMERA", MINT);
                 if ambient_changed {
                     self.touch();
                 }
@@ -772,6 +948,7 @@ impl eframe::App for SettingsApp {
                     );
                 }
                 });
+                });
 
                 ui.add_space(24.0);
                 ui.separator();
@@ -794,26 +971,42 @@ impl eframe::App for SettingsApp {
 }
 
 fn section(ui: &mut egui::Ui, title: &str) {
-    ui.label(RichText::new(title).size(16.0).color(INK).strong());
-    ui.add_space(10.0);
+    let (number, name) = title.split_once('/').unwrap_or(("00", title));
+    ui.horizontal(|ui| {
+        Frame::new()
+            .fill(INK)
+            .corner_radius(CornerRadius::same(4))
+            .inner_margin(Margin::symmetric(9, 4))
+            .show(ui, |ui| {
+                ui.label(
+                    RichText::new(number.trim())
+                        .font(poster_font(19.0))
+                        .color(Color32::WHITE),
+                );
+            });
+        ui.label(
+            RichText::new(name.trim())
+                .font(poster_font(27.0))
+                .color(INK),
+        );
+    });
+    ui.add_space(13.0);
 }
 
-fn intensity_chip(
-    ui: &mut egui::Ui,
-    current: &mut Intensity,
-    value: Intensity,
-    label: &str,
-) -> bool {
-    let selected = *current == value;
-    let fill = if selected { AMBER } else { Color32::WHITE };
-    let text = if selected { Color32::WHITE } else { INK };
-    let btn = egui::Button::new(RichText::new(label).color(text).size(13.0))
-        .fill(fill)
-        .stroke(Stroke::new(1.0_f32, LINE))
-        .corner_radius(CornerRadius::same(14))
-        .min_size(Vec2::new(96.0, 32.0));
-    if ui.add(btn).clicked() && !selected {
-        *current = value;
+fn toggle_sticker(ui: &mut egui::Ui, current: &mut bool, label: &str, fill: Color32) -> bool {
+    let text = format!(
+        "{}  /  {}",
+        label,
+        if *current { "ligado" } else { "desligado" }
+    );
+    let button = egui::Button::new(RichText::new(text).size(15.0).color(INK).strong())
+        .fill(if *current { fill } else { Color32::WHITE })
+        .stroke(Stroke::new(2.0_f32, INK))
+        .corner_radius(CornerRadius::same(5))
+        .min_size(Vec2::new(0.0, 39.0))
+        .wrap();
+    if ui.add(button).clicked() {
+        *current = !*current;
         true
     } else {
         false
@@ -823,14 +1016,23 @@ fn intensity_chip(
 fn time_row(ui: &mut egui::Ui, label: &str, h: &mut u32, m: &mut u32) -> bool {
     let mut changed = false;
     ui.horizontal(|ui| {
-        ui.label(RichText::new(label).size(13.0).color(INK));
+        ui.label(RichText::new(label).font(poster_font(19.0)).color(INK));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            changed |= ui
-                .add(egui::DragValue::new(m).range(0..=59).suffix(" min"))
-                .changed();
-            changed |= ui
-                .add(egui::DragValue::new(h).range(0..=23).suffix(" h"))
-                .changed();
+            Frame::new()
+                .fill(Color32::WHITE)
+                .stroke(Stroke::new(1.5_f32, INK))
+                .corner_radius(CornerRadius::same(5))
+                .inner_margin(Margin::symmetric(8, 5))
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        changed |= ui
+                            .add(egui::DragValue::new(m).range(0..=59).suffix(" min"))
+                            .changed();
+                        changed |= ui
+                            .add(egui::DragValue::new(h).range(0..=23).suffix(" h"))
+                            .changed();
+                    });
+                });
         });
     });
     changed

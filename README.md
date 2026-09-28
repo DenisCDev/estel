@@ -19,6 +19,10 @@
   <sub>Avatar inspirado no personagem do <a href="https://github.com/DenisCDev/portfolio-site">portfólio DenisDev</a>.</sub>
 </p>
 
+A interface Windows usa as fontes Fredoka e Lilita One, distribuídas sob a
+SIL Open Font License nos arquivos `assets/fredoka-OFL.txt` e
+`assets/lilitaone-OFL.txt`.
+
 O Estel muda gradualmente a temperatura de cor e o brilho da tela no Windows e
 no Android. A versão Windows também pode tocar ruído rosa ou marrom em volume
 baixo durante a noite. Tudo roda no aparelho, sem conta e sem coleta de dados
