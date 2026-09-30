@@ -14,7 +14,10 @@ use windows::Win32::Devices::Display::{
     DestroyPhysicalMonitor, GetMonitorBrightness, GetNumberOfPhysicalMonitorsFromHMONITOR,
     GetPhysicalMonitorsFromHMONITOR, PHYSICAL_MONITOR, SetMonitorBrightness,
 };
-use windows::Win32::Foundation::{GetLastError, HANDLE, LPARAM, RECT};
+use windows::Win32::Foundation::{
+    ERROR_GRAPHICS_INVALID_PHYSICAL_MONITOR_HANDLE, ERROR_GRAPHICS_MONITOR_NO_LONGER_EXISTS,
+    GetLastError, HANDLE, LPARAM, RECT, WIN32_ERROR,
+};
 use windows::Win32::Graphics::Gdi::{
     DISPLAY_DEVICEW, EnumDisplayDevicesW, EnumDisplayMonitors, GetMonitorInfoW, HDC, HMONITOR,
     MONITORINFO, MONITORINFOEXW,
@@ -40,6 +43,7 @@ static TOPOLOGY: OnceLock<Vec<usize>> = OnceLock::new();
 static LAST_Q: AtomicU32 = AtomicU32::new(u32::MAX);
 static DDC_FALLBACK: AtomicBool = AtomicBool::new(false);
 static FALLBACK_RESTORED: AtomicBool = AtomicBool::new(false);
+static DDC_HANDLES_STALE: AtomicBool = AtomicBool::new(false);
 static RESTORED: AtomicBool = AtomicBool::new(false);
 static RESTORE_OK: AtomicBool = AtomicBool::new(false);
 
@@ -138,7 +142,7 @@ pub fn init() -> bool {
 /// No-op if brightness hasn't changed by more than 2 %.
 /// Returns whether every monitor is using DDC for this target.
 pub fn apply(brightness: f32) -> bool {
-    if RESTORED.load(Ordering::SeqCst) {
+    if RESTORED.load(Ordering::SeqCst) || DDC_HANDLES_STALE.load(Ordering::SeqCst) {
         return false;
     }
     if !DDC_FALLBACK.load(Ordering::SeqCst)
@@ -151,7 +155,7 @@ pub fn apply(brightness: f32) -> bool {
         tracing::warn!("monitores alterados; brilho DDC desativado até reiniciar o Estel");
     }
     if DDC_FALLBACK.load(Ordering::SeqCst) {
-        if !FALLBACK_RESTORED.load(Ordering::SeqCst) {
+        if !FALLBACK_RESTORED.load(Ordering::SeqCst) && !DDC_HANDLES_STALE.load(Ordering::SeqCst) {
             let _ = park();
         }
         return false;
@@ -165,17 +169,26 @@ pub fn apply(brightness: f32) -> bool {
         return true;
     }
     let mut index = 0;
+    let mut stale_handles = Vec::new();
     let complete = write_all_brightness(states, brightness, |monitor, value| {
         index += 1;
         let ok = unsafe { SetMonitorBrightness(monitor, value) } != 0;
         if !ok {
-            tracing::warn!(monitor = index, error = ?unsafe { GetLastError() }, "falha ao ajustar brilho DDC; usando sobreposição em todas as telas");
+            let error = unsafe { GetLastError() };
+            if monitor_handle_expired(error) {
+                stale_handles.push(monitor.0 as usize);
+            }
+            tracing::warn!(
+                monitor = index,
+                ?error,
+                "falha ao ajustar brilho DDC; usando sobreposição em todas as telas"
+            );
         }
         ok
     });
     if !complete {
         DDC_FALLBACK.store(true, Ordering::SeqCst);
-        if !park() {
+        if !park_excluding(&stale_handles) {
             tracing::warn!("não foi possível restaurar todos os monitores após falha DDC");
         }
     }
@@ -201,14 +214,26 @@ fn write_all_brightness(
 
 /// Put the backlight back without releasing handles. Used by Pausar.
 pub fn park() -> bool {
+    park_excluding(&[])
+}
+
+fn park_excluding(excluded: &[usize]) -> bool {
+    if DDC_HANDLES_STALE.load(Ordering::SeqCst) {
+        return false;
+    }
     let mut restored = true;
+    let mut stale_handles = !excluded.is_empty();
     if let Some(states) = MONITORS.get() {
-        for mon in states {
-            if unsafe { SetMonitorBrightness(handle(mon.raw_handle), mon.original) } == 0 {
-                tracing::warn!(error = ?unsafe { GetLastError() }, "não foi possível restaurar o brilho do monitor");
-                restored = false;
-            }
-        }
+        let (backlights_restored, expired) =
+            restore_backlights(states, excluded, |monitor, value| {
+                if unsafe { SetMonitorBrightness(monitor, value) } != 0 {
+                    Ok(())
+                } else {
+                    Err(unsafe { GetLastError() })
+                }
+            });
+        restored &= backlights_restored;
+        stale_handles |= expired;
         match session::load_ddc_originals() {
             session::DdcSnapshot::Named(saved) if !named_mapping_complete(&saved, states) => {
                 restored = false;
@@ -223,10 +248,43 @@ pub fn park() -> bool {
         restored = matches!(session::load_ddc_originals(), session::DdcSnapshot::Missing);
     }
     LAST_Q.store(u32::MAX, Ordering::Relaxed);
+    if stale_handles {
+        DDC_HANDLES_STALE.store(true, Ordering::SeqCst);
+        tracing::warn!(
+            "identificador DDC expirou; próxima restauração ficará para a reinicialização do Estel"
+        );
+    }
     if DDC_FALLBACK.load(Ordering::SeqCst) {
         FALLBACK_RESTORED.store(restored, Ordering::SeqCst);
     }
     restored
+}
+
+fn restore_backlights(
+    states: &[MonState],
+    excluded: &[usize],
+    mut write: impl FnMut(HANDLE, u32) -> Result<(), WIN32_ERROR>,
+) -> (bool, bool) {
+    let mut restored = true;
+    let mut stale = !excluded.is_empty();
+    for mon in states {
+        if excluded.contains(&mon.raw_handle) {
+            restored = false;
+            continue;
+        }
+        if let Err(error) = write(handle(mon.raw_handle), mon.original) {
+            stale |= monitor_handle_expired(error);
+            restored = false;
+            tracing::warn!(?error, "não foi possível restaurar o brilho do monitor");
+        }
+    }
+    (restored, stale)
+}
+
+fn monitor_handle_expired(error: WIN32_ERROR) -> bool {
+    let code = error.0 as i32;
+    code == ERROR_GRAPHICS_MONITOR_NO_LONGER_EXISTS.0
+        || code == ERROR_GRAPHICS_INVALID_PHYSICAL_MONITOR_HANDLE.0
 }
 
 fn named_mapping_complete(saved: &[session::DdcOriginal], states: &[MonState]) -> bool {
@@ -415,10 +473,85 @@ fn monitor_topology_changed(initial: &[usize], current: &[usize]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        MonState, legacy_mapping_complete, monitor_topology_changed, named_mapping_complete,
-        named_restore_values, write_all_brightness,
+        MonState, legacy_mapping_complete, monitor_handle_expired, monitor_topology_changed,
+        named_mapping_complete, named_restore_values, restore_backlights, write_all_brightness,
     };
     use crate::session::DdcOriginal;
+    use windows::Win32::Foundation::{ERROR_GRAPHICS_MONITOR_NO_LONGER_EXISTS, WIN32_ERROR};
+
+    #[test]
+    fn expired_monitor_error_is_recognized() {
+        assert!(monitor_handle_expired(WIN32_ERROR(
+            ERROR_GRAPHICS_MONITOR_NO_LONGER_EXISTS.0 as u32
+        )));
+        assert!(!monitor_handle_expired(WIN32_ERROR(5)));
+    }
+
+    #[test]
+    fn expired_monitor_is_skipped_while_valid_monitor_is_restored() {
+        let states = [
+            MonState {
+                id: "a".into(),
+                raw_handle: 1,
+                min: 0,
+                original: 20,
+                max: 100,
+            },
+            MonState {
+                id: "b".into(),
+                raw_handle: 2,
+                min: 0,
+                original: 70,
+                max: 100,
+            },
+        ];
+        let mut writes = Vec::new();
+        let result = restore_backlights(&states, &[1], |monitor, value| {
+            writes.push((monitor.0 as usize, value));
+            Ok(())
+        });
+        assert_eq!(writes, vec![(2, 70)]);
+        assert_eq!(result, (false, true));
+    }
+
+    #[test]
+    fn fallback_does_not_write_an_expired_handle_again() {
+        let states = [
+            MonState {
+                id: "a".into(),
+                raw_handle: 1,
+                min: 0,
+                original: 20,
+                max: 100,
+            },
+            MonState {
+                id: "b".into(),
+                raw_handle: 2,
+                min: 0,
+                original: 70,
+                max: 100,
+            },
+        ];
+        let mut writes = Vec::new();
+        let mut expired = Vec::new();
+        let applied = write_all_brightness(&states, 0.5, |monitor, _| {
+            let raw = monitor.0 as usize;
+            writes.push(raw);
+            if raw == 1 {
+                expired.push(raw);
+                false
+            } else {
+                true
+            }
+        });
+        assert!(!applied);
+        let (restored, stale) = restore_backlights(&states, &expired, |monitor, _| {
+            writes.push(monitor.0 as usize);
+            Ok(())
+        });
+        assert_eq!((restored, stale), (false, true));
+        assert_eq!(writes, vec![1, 2, 2]);
+    }
 
     #[test]
     fn saved_brightness_matches_identity_in_any_enumeration_order() {

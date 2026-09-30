@@ -138,7 +138,7 @@ impl Default for Config {
             screen_window_relation: ScreenWindowRelation::Side,
             wake: "07:00".to_string(),
             bed: "23:00".to_string(),
-            min_brightness: 0.30,
+            min_brightness: 0.25,
             gamma_warm_floor_k: 3400.0,
             tick_seconds: 30,
             max_volume: 0.35,
@@ -377,6 +377,7 @@ mod tests {
         assert_eq!(cfg.schedule.keypoints.len(), back.schedule.keypoints.len());
         assert_eq!(back.wake, "07:00");
         assert_eq!(back.intensity, Intensity::Media);
+        assert_eq!(back.min_brightness, 0.25);
         assert!(!back.ambient_enabled);
         assert_eq!(back.support_country, SupportCountry::Brazil);
     }

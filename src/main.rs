@@ -140,6 +140,7 @@ fn main() -> anyhow::Result<()> {
     let panic_running = running.clone();
     let orig_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
+        tracing::error!(panic = %info, "falha interna no Estel");
         panic_running.store(false, Ordering::SeqCst);
         if let Ok(_screen_guard) = SCREEN_LOCK.try_lock() {
             restore_screen_unlocked();
@@ -165,6 +166,7 @@ fn main() -> anyhow::Result<()> {
     }
 
     let mut paused = false;
+    let mut user_quit = false;
     let mut preview_until: Option<Instant> = None;
     let mut ambient_brightness = None;
     let mut ambient_last_ok: Option<Instant> = None;
@@ -294,6 +296,7 @@ fn main() -> anyhow::Result<()> {
                 fallback,
                 cfg.ambient_enabled,
                 fresh_camera_brightness(ambient_brightness, ambient_last_ok, Instant::now()),
+                now_min < sr_min || now_min >= ss_min,
             );
         }
         target.brightness = target.brightness.max(cfg.min_brightness);
@@ -433,6 +436,7 @@ fn main() -> anyhow::Result<()> {
             if let Some(action) = tray.poll() {
                 match action {
                     TrayAction::Quit => {
+                        user_quit = true;
                         running.store(false, Ordering::SeqCst);
                     }
                     TrayAction::TogglePause => {
@@ -579,6 +583,11 @@ fn main() -> anyhow::Result<()> {
         tracing::info!("Estel encerrado — monitor restaurado");
     } else {
         tracing::warn!("Estel encerrado — restauração do monitor pendente");
+        if user_quit {
+            show_error(w!(
+                "Não foi possível restaurar completamente a tela. Se o brilho estiver alterado, ajuste-o pelos botões do monitor. Ao abrir o Estel novamente, ele tentará recuperar o ajuste anterior."
+            ));
+        }
     }
     Ok(())
 }
@@ -685,9 +694,15 @@ fn brightness_with_sources(
     weather: f32,
     camera_enabled: bool,
     camera: Option<f32>,
+    night: bool,
 ) -> f32 {
     if camera_enabled && camera.is_some() {
-        brightness_with_ambient(scheduled, true, camera)
+        let adjusted = brightness_with_ambient(scheduled, true, camera);
+        if night {
+            adjusted.min(scheduled)
+        } else {
+            adjusted
+        }
     } else {
         weather
     }
@@ -1079,10 +1094,25 @@ mod tests {
     }
 
     #[test]
+    fn camera_does_not_brighten_after_sunset() {
+        assert_eq!(
+            brightness_with_sources(0.22, 0.22, true, Some(1.0), true),
+            0.22
+        );
+        assert_eq!(
+            brightness_with_sources(0.50, 0.50, true, Some(0.35), true),
+            0.4475
+        );
+    }
+
+    #[test]
     fn weather_is_only_used_without_a_camera_reading() {
-        assert!((brightness_with_sources(0.5, 0.7, true, Some(0.8)) - 0.605).abs() < 0.0001);
-        assert_eq!(brightness_with_sources(0.5, 0.7, true, None), 0.7);
-        assert_eq!(brightness_with_sources(0.5, 0.7, false, Some(0.8)), 0.7);
+        assert!((brightness_with_sources(0.5, 0.7, true, Some(0.8), false) - 0.605).abs() < 0.0001);
+        assert_eq!(brightness_with_sources(0.5, 0.7, true, None, false), 0.7);
+        assert_eq!(
+            brightness_with_sources(0.5, 0.7, false, Some(0.8), false),
+            0.7
+        );
     }
 
     #[test]

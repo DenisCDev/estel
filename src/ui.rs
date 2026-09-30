@@ -1099,7 +1099,7 @@ impl eframe::App for SettingsApp {
                     }
                     ui.label(
                         RichText::new(
-                            "A câmera faz uma correção suave sobre o horário; não substitui um sensor de luz. Se falhar, o Estel usa clima e janela quando ativos, ou só o horário.",
+                            "A câmera faz uma correção suave sobre o horário; depois do pôr do sol, não clareia acima da curva noturna. Não substitui um sensor de luz. Se falhar, o Estel usa clima e janela quando ativos, ou só o horário.",
                         )
                         .size(12.0)
                         .color(MUTED),
