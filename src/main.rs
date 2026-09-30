@@ -52,7 +52,9 @@ fn main() -> anyhow::Result<()> {
         }
         println!(
             "{}",
-            ambient::sample_luminance(camera_index).map_err(anyhow::Error::msg)?
+            serde_json::to_string(
+                &ambient::sample_luminance(camera_index).map_err(anyhow::Error::msg)?
+            )?
         );
         return Ok(());
     }
@@ -246,17 +248,15 @@ fn main() -> anyhow::Result<()> {
 
         if cfg.preserve_colors() {
             tray.set_ambient_status("Luz ambiente: pausada para preservar cores");
+        } else if cfg.ambient_enabled && !cfg.camera_is_calibrated() {
+            tray.set_ambient_status("Luz ambiente: calibre a câmera no painel");
         } else if cfg.ambient_enabled && ambient_last_ok.is_none() && !ambient_failed {
             tray.set_ambient_status("Luz ambiente: aguardando câmera");
         } else {
-            let holding = ambient_failed
-                && fresh_camera_brightness(ambient_brightness, ambient_last_ok, Instant::now())
-                    .is_some();
             update_ambient_status(
                 &tray,
                 cfg.ambient_enabled,
                 ambient_failed,
-                holding,
                 cfg.weather_enabled && current_weather.is_some(),
             );
         }
@@ -273,7 +273,9 @@ fn main() -> anyhow::Result<()> {
         };
 
         let scheduled = cfg.schedule.target_at(now_min, &ctx);
+        let scheduled = estel::comfort::prepare_for_rest(scheduled, now_min, &ctx, &cfg);
         let mut target = scheduled.attenuate(cfg.intensity.factor());
+        let brightness_ceiling = estel::comfort::brightness_ceiling(now_min, &ctx, &cfg);
         let preview = preview_until.is_some_and(|t| Instant::now() < t);
         if preview_until.is_some_and(|t| Instant::now() >= t) {
             preview_until = None;
@@ -296,10 +298,14 @@ fn main() -> anyhow::Result<()> {
                 fallback,
                 cfg.ambient_enabled,
                 fresh_camera_brightness(ambient_brightness, ambient_last_ok, Instant::now()),
-                now_min < sr_min || now_min >= ss_min,
+                now_min < sr_min
+                    || now_min >= ss_min
+                    || estel::comfort::is_rest_period(now_min, ctx.wake_min, ctx.bed_min),
             );
         }
-        target.brightness = target.brightness.max(cfg.min_brightness);
+        target.brightness = target
+            .brightness
+            .clamp(cfg.min_brightness, brightness_ceiling);
 
         if cfg.preserve_colors() || !cfg.display_enabled || (paused && !preview) || preview {
             last_display_brightness = None;
@@ -307,7 +313,8 @@ fn main() -> anyhow::Result<()> {
         } else {
             let now = Instant::now();
             target.brightness =
-                limit_brightness_change(last_display_brightness, target.brightness, now);
+                limit_brightness_change(last_display_brightness, target.brightness, now)
+                    .max(cfg.min_brightness);
             target.cct_kelvin = limit_color_change(last_display_cct, target.cct_kelvin, now);
             last_display_brightness = Some((target.brightness, now));
             last_display_cct = Some((target.cct_kelvin, now));
@@ -639,12 +646,14 @@ fn apply_ambient_reading(
     last_ok: &mut Option<Instant>,
 ) {
     match reading {
-        Ok(value) => {
+        Ok(value) if value.is_finite() && (0.0..=1.0).contains(&value) => {
             *brightness = Some(value.clamp(0.0, 1.0));
             *failed = false;
             *last_ok = Some(Instant::now());
         }
-        Err(_) => {
+        Ok(_) | Err(_) => {
+            *brightness = None;
+            *last_ok = None;
             *failed = true;
         }
     }
@@ -704,7 +713,11 @@ fn brightness_with_sources(
             adjusted
         }
     } else {
-        weather
+        if night {
+            weather.min(scheduled)
+        } else {
+            weather
+        }
     }
 }
 
@@ -764,6 +777,8 @@ fn brightness_controls_changed(old: &Config, new: &Config) -> bool {
         || old.ambient_brightness_min != new.ambient_brightness_min
         || old.ambient_brightness_max != new.ambient_brightness_max
         || old.min_brightness != new.min_brightness
+        || old.day_brightness_max != new.day_brightness_max
+        || old.rest_brightness_max != new.rest_brightness_max
         || old.wake != new.wake
         || old.bed != new.bed
         || old.weather_enabled != new.weather_enabled
@@ -776,6 +791,7 @@ fn brightness_controls_changed(old: &Config, new: &Config) -> bool {
 
 fn ambient_source_changed(old: &Config, new: &Config) -> bool {
     old.ambient_enabled != new.ambient_enabled
+        || old.ambient_calibration != new.ambient_calibration
         || old.ambient_camera_index != new.ambient_camera_index
         || old.ambient_brightness_min != new.ambient_brightness_min
         || old.ambient_brightness_max != new.ambient_brightness_max
@@ -886,16 +902,9 @@ fn tick_audio(
     }
 }
 
-fn ambient_status_text(
-    enabled: bool,
-    failed: bool,
-    holding: bool,
-    weather_active: bool,
-) -> &'static str {
+fn ambient_status_text(enabled: bool, failed: bool, weather_active: bool) -> &'static str {
     if !enabled {
         "Luz ambiente: desligada"
-    } else if failed && holding {
-        "Câmera indisponível — mantendo última leitura"
     } else if failed && weather_active {
         "Câmera indisponível — clima e horário"
     } else if failed {
@@ -905,19 +914,8 @@ fn ambient_status_text(
     }
 }
 
-fn update_ambient_status(
-    tray: &Tray,
-    enabled: bool,
-    failed: bool,
-    holding: bool,
-    weather_active: bool,
-) {
-    tray.set_ambient_status(ambient_status_text(
-        enabled,
-        failed,
-        holding,
-        weather_active,
-    ));
+fn update_ambient_status(tray: &Tray, enabled: bool, failed: bool, weather_active: bool) {
+    tray.set_ambient_status(ambient_status_text(enabled, failed, weather_active));
 }
 
 fn show_error(message: windows::core::PCWSTR) {
@@ -1050,7 +1048,7 @@ mod tests {
     use std::time::{Duration, Instant};
 
     #[test]
-    fn camera_failure_holds_recent_brightness_before_fallback() {
+    fn rejected_camera_reading_immediately_returns_to_schedule() {
         let mut brightness = Some(0.65);
         let mut failed = false;
         let now = Instant::now();
@@ -1061,15 +1059,14 @@ mod tests {
             &mut failed,
             &mut last_ok,
         );
-        assert_eq!(brightness, Some(0.65));
-        assert!(
-            (brightness_with_ambient(
+        assert_eq!(brightness, None);
+        assert_eq!(
+            brightness_with_ambient(
                 0.2,
                 true,
                 fresh_camera_brightness(brightness, last_ok, now + Duration::from_secs(120)),
-            ) - 0.3575)
-                .abs()
-                < 0.0001
+            ),
+            0.2
         );
         assert_eq!(
             brightness_with_ambient(
@@ -1085,12 +1082,21 @@ mod tests {
         assert!((brightness_with_ambient(0.2, true, brightness) - 0.41).abs() < 0.0001);
         assert_eq!(brightness_with_ambient(0.2, false, brightness), 0.2);
         assert!(!failed);
+        apply_ambient_reading(Ok(f32::NAN), &mut brightness, &mut failed, &mut last_ok);
+        assert_eq!(brightness, None);
+        assert!(failed);
     }
 
     #[test]
     fn camera_brightness_gently_adjusts_night_schedule() {
         assert!((brightness_with_ambient(0.16, true, Some(1.0)) - 0.454).abs() < 0.0001);
         assert!((brightness_with_ambient(0.16, true, Some(0.35)) - 0.2265).abs() < 0.0001);
+    }
+
+    #[test]
+    fn weather_does_not_brighten_protected_schedule() {
+        assert_eq!(brightness_with_sources(0.25, 0.5, true, None, true), 0.25);
+        assert_eq!(brightness_with_sources(0.25, 0.5, false, None, true), 0.25);
     }
 
     #[test]
@@ -1196,13 +1202,13 @@ mod tests {
     }
 
     #[test]
-    fn camera_status_names_held_reading_and_then_fallback() {
+    fn camera_status_names_weather_or_schedule_fallback() {
         assert_eq!(
-            ambient_status_text(true, true, true, false),
-            "Câmera indisponível — mantendo última leitura"
+            ambient_status_text(true, true, true),
+            "Câmera indisponível — clima e horário"
         );
         assert_eq!(
-            ambient_status_text(true, true, false, false),
+            ambient_status_text(true, true, false),
             "Câmera indisponível — brilho por horário"
         );
     }

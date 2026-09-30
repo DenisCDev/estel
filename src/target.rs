@@ -41,7 +41,7 @@ impl Target {
         }
     }
 
-    /// Scale effects toward neutral. `factor` 1.0 = full schedule, 0.0 = off.
+    /// Scale color and sound toward neutral without changing comfortable brightness.
     ///
     /// CCT interpolates in reciprocal-Kelvin space. Noise is silenced below
     /// the configured intensity threshold.
@@ -56,7 +56,7 @@ impl Target {
 
         Target {
             cct_kelvin: 1_000_000.0 / mired.max(1.0),
-            brightness: 1.0 + (self.brightness - 1.0) * t,
+            brightness: self.brightness,
             noise_gain: self.noise_gain * t,
             noise: if t >= 0.2 { self.noise } else { None },
         }
@@ -66,6 +66,16 @@ impl Target {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn gentle_color_keeps_comfortable_brightness() {
+        let target = Target {
+            brightness: 0.16,
+            ..Target::neutral()
+        };
+        assert_eq!(target.attenuate(0.6).brightness, 0.16);
+        assert_eq!(target.attenuate(0.3).brightness, 0.16);
+    }
 
     #[test]
     fn full_factor_keeps_values() {
@@ -82,7 +92,7 @@ mod tests {
     }
 
     #[test]
-    fn zero_factor_is_neutral_and_silent() {
+    fn zero_factor_preserves_brightness_with_neutral_color_and_silence() {
         let t = Target {
             cct_kelvin: 1900.0,
             brightness: 0.0,
@@ -91,7 +101,7 @@ mod tests {
         };
         let a = t.attenuate(0.0);
         assert!((a.cct_kelvin - 6500.0).abs() < 1.0);
-        assert!((a.brightness - 1.0).abs() < 1e-5);
+        assert_eq!(a.brightness, 0.0);
         assert_eq!(a.noise, None);
         assert!(a.noise_gain.abs() < 1e-5);
     }

@@ -1,6 +1,8 @@
 # Conforto visual, foco e apoio emocional — evidências e decisões
 
-Revisão em 28/09/2026. Este catálogo distingue resultados observados,
+Revisão em 29/09/2026. A [auditoria de atualização científica](RESEARCH-AUDIT-2026.md)
+registra os consensos e estudos de 2024–2026, suas limitações e implicações para
+o algoritmo. Este catálogo distingue resultados observados,
 orientações de ergonomia e escolhas de produto. Uma preferência visual não é
 uma medida de ansiedade, e nenhum estudo abaixo valida o Estel como intervenção
 para transtorno de ansiedade, depressão ou crise de pânico.
@@ -8,9 +10,9 @@ para transtorno de ansiedade, depressão ou crise de pânico.
 | Questão | Fonte primária ou revisão qualificada | O que sustenta | Decisão no Estel |
 |---|---|---|---|
 | Brilho e reflexos | [OSHA: iluminação e reflexos](https://www.osha.gov/etools/computer-workstations/workstation-environment) e [lista de avaliação](https://www.osha.gov/etools/computer-workstations/checklists/evaluation) | Brilho e contraste devem ser ajustados ao conforto; luz direta e reflexos dificultam a leitura. | Ajustes graduais; orientar luz difusa, posição lateral da janela e tamanho legível de texto. Não impor o menor brilho possível. |
-| Mudanças de brilho e cor | [Massa et al., ensaio de 47 participantes](https://pubmed.ncbi.nlm.nih.gov/42376338/) | No grupo que reduziu brilho houve menor pontuação de fadiga ocular; o grupo com modulação de cor não teve redução significativa. Estudo pequeno, sem testar Estel ou câmera. | Priorizar brilho confortável e tratar cor quente como preferência/horário, sem prometer alívio de fadiga ou ansiedade. |
+| Mudanças de brilho e cor | [Massa et al., 2025, ensaio com 47 concluintes](https://pubmed.ncbi.nlm.nih.gov/42376338/) | Houve melhora antes/depois no grupo que reduziu brilho; cor não apresentou redução significativa. Dos 74 inscritos, 27 não concluíram. A análise intragrupo não estabelece superioridade sobre o controle. Sem testar Estel ou câmera. | Priorizar brilho confortável e tratar cor quente como preferência/horário; não usar esse ensaio pequeno para escolher coeficientes ou alegar eficácia comprovada. |
 | Pausas | [OSHA: monitor e tempo de visualização](https://www.osha.gov/etools/computer-workstations/components/monitors), [ensaio de pausas de 2025](https://pubmed.ncbi.nlm.nih.gov/40466853/) e [ensaio da regra 20-20-20](https://pubmed.ncbi.nlm.nih.gov/36473088/) | Pausas e piscar são recomendados; ensaios diferem sobre o esquema exato de 20 segundos. | Botão de pausa de 20 s, sem interrupção compulsória nem alegação terapêutica. |
-| Luz azul | [Revisão Cochrane de ensaios](https://www.cochranelibrary.com/cdsr/doi/10.1002/14651858.CD013244.pub2/pdf/CDSR/CD013244/CD013244_abstract.pdf) | Lentes que filtram azul provavelmente não reduzem fadiga ocular de curto prazo. Não é um teste direto de filtro de tela. | Não vender cor quente como proteção ocular ou redução comprovada de ansiedade. |
+| Luz azul | [Revisão Cochrane de ensaios](https://www.cochranelibrary.com/cdsr/doi/10.1002/14651858.CD013244.pub2/pdf/CDSR/CD013244/CD013244_abstract.pdf) | Lentes que filtram azul podem não reduzir fadiga ocular de curto prazo, com baixa certeza para esse desfecho. Resultados de sono são incertos. Não é um teste direto de filtro de tela. | Não vender cor quente como proteção ocular ou redução comprovada de ansiedade. |
 | Brilho automático em dispositivos | [Apple: iPhone](https://support.apple.com/guide/iphone/adjust-screen-brightness-color-balance-iph60ba71065/27/ios/27) e [Microsoft: Windows](https://support.microsoft.com/en-us/windows/hardware/display-graphics/change-display-brightness-and-color-in-windows) | Dispositivos compatíveis usam sensor de luz ambiente; ajuste manual continua disponível. O Windows também pode ajustar brilho conforme o conteúdo. | Recomendar experimentar o sensor do Windows antes da câmera; evitar controladores automáticos concorrentes. |
 | Câmera como sinal de luz | [Microsoft Learn: exposição automática de câmeras](https://learn.microsoft.com/en-us/windows-hardware/drivers/stream/camera-settings-page) | A exposição automática e a compensação de brilho alteram a imagem sem que a luz do ambiente varie na mesma proporção. | Câmera desligada em instalações novas; quando ativada, leitura local e suavizada corrige apenas 35% da diferença para a curva por horário. O peso é uma escolha conservadora de engenharia, não um número clínico validado. |
 | Orientação da janela e clima | [OSHA: posição da tela e da janela](https://www.osha.gov/etools/computer-workstations/workstation-environment) | Reduzir reflexos e grandes contrastes no campo visual pode melhorar a leitura. Radiação de uma estação meteorológica não mede a luz na mesa. | Clima/janela são aproximações opcionais, usadas como reserva quando a câmera não fornece leitura. |
@@ -32,7 +34,7 @@ o Android quando seu mecanismo é diferente.
 | Câmera opt-in como sensor (`ambient`, `main`) | [Apple](https://support.apple.com/guide/iphone/adjust-screen-brightness-color-balance-iph60ba71065/27/ios/27) e [Windows](https://learn.microsoft.com/en-us/windows-hardware/design/device-experiences/sensors-adaptive-brightness) usam sensor de luz ambiente dedicado. A [Microsoft](https://learn.microsoft.com/en-us/windows-hardware/drivers/stream/camera-settings-page) documenta exposição automática de câmera. | **Experimental, condicionado.** Média de pixels da webcam não equivale a lux no olho e pode variar com enquadramento e exposição. Fica desligada por padrão; quando escolhida, ajusta apenas parte do brilho de horário. Uma webcam disponível não justifica torná-la obrigatória. |
 | Clima, sol e janela (`weather`, `main`) | A [OSHA](https://www.osha.gov/etools/computer-workstations/workstation-environment) recomenda luz difusa, persianas e monitor perpendicular à janela para reduzir reflexos. | **Estimativa fraca.** Radiação externa e azimute não medem a claridade na mesa nem detectam reflexo no vidro. O acréscimo de brilho de 0 a 25 pontos é heurístico e só atua sem leitura da câmera. A posição física da tela continua mais importante. |
 | DDC, gama e camada escura (`brightness`, `display`, `overlay`) | A [OSHA](https://www.osha.gov/etools/computer-workstations/workstation-environment) recomenda visibilidade e contraste confortável; [Sheedy et al.](https://pubmed.ncbi.nlm.nih.gov/16251151/) examinaram contraste entre tela e entorno. A [Microsoft](https://learn.microsoft.com/en-us/windows/win32/api/highlevelmonitorconfigurationapi/nf-highlevelmonitorconfigurationapi-getmonitorbrightness) alerta que a implementação DDC/CI varia entre monitores. | **Mecanismos técnicos, não dosagem óptica.** DDC muda o ajuste físico se o monitor aceitar; gama/camada alteram pixels aparentes. Identificadores de monitor expirados interrompem novas chamadas DDC até reiniciar o Estel, com restauração pendente registrada. Porcentagem do Estel não é cd/m², e uma camada não reduz reflexão ambiente nem garante contraste em todo conteúdo. |
-| Ausência de cintilação simulada (`overlay`, `display`) | A [IEEE 1789-2015](https://standards.ieee.org/ieee/1789/4945/) discute modulação da luz em LEDs. | **Correto no âmbito do software.** O Estel não adiciona pisca deliberado. Isso não identifica nem elimina PWM do hardware, e reduzir brilho físico pode mudar a modulação de alguns painéis. |
+| Ausência de cintilação simulada (`overlay`, `display`) | A [CIE 249:2022, com corrigenda de 2026](https://www.cie.co.at/publications/visual-aspects-time-modulated-lighting-systems), aborda artefatos temporais. A [IEEE 1789-2015](https://standards.ieee.org/ieee/1789/4479/) é histórica e está Inactive-Reserved desde 26/03/2026. | **Correto no âmbito do software.** O Estel não adiciona pisca deliberado. Isso não identifica nem elimina PWM do hardware, e reduzir brilho físico pode mudar a modulação de alguns painéis. Não há certificação de conformidade do Estel com esses documentos. |
 | Ruído rosa/marrom e volume (`audio`, `config`, `target`) | A [revisão sistemática de Riedy et al.](https://pubmed.ncbi.nlm.nih.gov/33007706/) classificou como **muito baixa** a certeza de que ruído contínuo melhora o sono e registrou possíveis efeitos negativos. Uma [metanálise de desempenho](https://pubmed.ncbi.nlm.nih.gov/38428577/) achou pequeno ganho em jovens com sintomas de TDAH, mas piora no grupo sem TDAH: não generalizar para foco no público do Estel. Num [ensaio de ansiedade](https://pubmed.ncbi.nlm.nih.gov/35263341/), ruído rosa foi controle, e música teve resultado melhor em um subgrupo. | **Preferência opcional, sem promessa terapêutica.** Padrão desligado. Rosa→marrom por horário não tem eficácia específica demonstrada. O ganho digital limitado não garante dBA seguro: fone, volume do sistema e amplificador alteram a pressão sonora. A [OMS/UIT](https://www.who.int/publications/i/item/9789241515276) usa dose acústica e medições do dispositivo para segurança auditiva. |
 | Entrada, saída e troca do ruído (`audio`) | [Blumenthal e Berg](https://onlinelibrary.wiley.com/doi/abs/10.1111/j.1469-8986.1986.tb00682.x) estudaram como tempo de subida e intensidade de estímulos **breves e altos** afetam o reflexo de sobressalto; não testaram o fade do Estel. | **Escolha prudente de interface.** Mudanças normais passam por um fade de quatro segundos; a troca de cor passa por silêncio. O comando Pausar corta o som imediatamente. Quatro segundos não são duração clínica validada. |
 | Pausa visual e instrução para piscar (`ui`) | A [OSHA](https://www.osha.gov/etools/computer-workstations/components/monitors) recomenda olhar para longe e piscar regularmente. Estudos da regra exata de 20 segundos [não concordam](https://pubmed.ncbi.nlm.nih.gov/36473088/). | **Sustentado como lembrete opcional**, sem afirmar que 20 s previnem doença ou tratam ansiedade. |
@@ -42,29 +44,47 @@ o Android quando seu mecanismo é diferente.
 
 ### Decisão de combinação
 
-Não há ensaio que demonstre que **câmera + clima + janela + cor quente + ruído**
+Nas fontes examinadas neste catálogo e na auditoria de 2026, não foi encontrado
+ensaio que demonstre que **câmera + clima + janela + cor quente + ruído**
 reduzam ansiedade ou elevem foco. Combinar todas as entradas como se fossem
 medidas equivalentes aumentaria incerteza e poderia gerar ajustes concorrentes.
-O padrão deve ser: curva por horário com brilho confortável e ajuste manual;
+O padrão deve ser: curva por horário com piso ajustável e ajuste manual do
+monitor/Windows conforme o conforto;
 se houver sensor de luz do sistema, experimentar esse primeiro; usar a webcam
 somente por escolha e verificar visualmente se responde bem ao próprio cômodo.
 Clima/janela são reserva aproximada; ruído é uma preferência separada. A
 correção pela câmera e a de clima não se somam. Esta é uma decisão de projeto
 sob incerteza, não um protocolo médico.
 
+Para experimentar apenas o sensor automático do Windows, pause os ajustes de
+tela do Estel; a cor também será pausada. Desligar só a câmera não desativa
+a curva automática de brilho do Estel. Pausar só o brilho para usar o sensor
+do Windows e manter a cor do Estel continua sendo uma evolução
+proposta. A versão Windows 0.2.8 separa a intensidade da cor dos limites pessoais
+de brilho, mas não integra o sensor do Windows.
+
 ## Como as fontes de brilho se combinam
 
-1. A curva por horário e localização estabelece cor e brilho de base.
+1. A curva por horário e localização estabelece cor e brilho de base. A intensidade
+   afeta cor/som; não clareia a tela. Antes de dormir, a cor também considera a rotina.
 2. Se a pessoa ativou clima, a radiação solar e a posição aproximada da janela
    fazem uma pequena correção de brilho. A janela não é medida por sensor.
-3. Se a pessoa ativou a câmera e há leitura recente, ela tem prioridade sobre a
+3. Se a pessoa ativou a câmera, capturou referências escura/clara com contraste
+   suficiente e há leitura válida, ela tem prioridade sobre a
    estimativa de clima, mas corrige parcialmente o brilho de base. Entre o pôr
    do sol e o nascer do sol, não pode elevar o brilho acima da curva por horário.
-   Se falhar,
-   a leitura recente é mantida por até cinco minutos; depois volta ao clima
+   Se falhar ou sair da faixa calibrada, descarta a leitura e volta ao clima
    opcional ou à curva. A câmera não define a temperatura de cor.
-4. Os limites de brilho da câmera são ajustáveis. Toda mudança automática de
-   brilho e cor também passa pelo limitador temporal do aplicativo.
+4. Os tetos pessoais diurno e de descanso limitam todas as fontes. Descanso vale
+   depois do pôr do sol e das três horas antes de dormir até acordar. O valor
+   inicial de 25% é uma preferência ajustável, não uma dose biológica validada.
+5. Cinco quadros após 500 ms, contraste mínimo de 0,10 entre referências,
+   rejeição de valores fora de 0,02–0,98 e variação máxima de 0,05 são filtros
+   de engenharia sobre pixels normalizados. Não caracterizam exposição/ganho
+   nem certificam exatidão; rejeições e identificação de dispositivo reduzem
+   algumas falhas observáveis. Variações menores que dois pontos na saída
+   não movem o alvo suavizado. Toda mudança automática de brilho/cor passa
+   pelo limitador temporal, podendo levar minutos até o teto de descanso.
 
 O Estel não mede iluminância em lux nem conhece o brilho em cd/m² de cada
 monitor. A faixa escolhida é pessoal e precisa ser conferida na tela real.

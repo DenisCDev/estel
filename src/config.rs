@@ -22,7 +22,7 @@ pub enum Intensity {
 }
 
 impl Intensity {
-    /// Multiplier applied to all schedule deltas (0.0 = neutral, 1.0 = full).
+    /// Multiplier applied to color and sound, independently of brightness.
     pub fn factor(self) -> f32 {
         match self {
             Intensity::Alta => 1.0,
@@ -87,6 +87,9 @@ pub struct Config {
     /// Lowest comfortable software luminance (0..1) so the screen is never
     /// fully black even at deep night.
     pub min_brightness: f32,
+    /// Personal brightness ceilings, independent of color intensity.
+    pub day_brightness_max: f32,
+    pub rest_brightness_max: f32,
     /// Gentle warm floor (Kelvin) that the gamma path is allowed to reach before
     /// the overlay takes over; staying ≳3400 K avoids the Win11 gamma clamp.
     pub gamma_warm_floor_k: f32,
@@ -104,8 +107,8 @@ pub struct Config {
     /// Avoid global color transforms when color discrimination may differ.
     pub color_vision_deficiency: bool,
 
-    /// Intensity of circadian effects. Switchable at runtime via tray.
-    /// "alta" = full (default), "media" = 60 %, "suave" = 30 %.
+    /// Color and sound intensity. Switchable at runtime via tray.
+    /// "alta" = full, "media" = 60 % (default), "suave" = 30 %.
     pub intensity: Intensity,
 
     /// Enable webcam-driven ambient brightness adaptation.
@@ -118,12 +121,51 @@ pub struct Config {
     pub ambient_brightness_min: f32,
     /// Highest screen brightness when ambient light is high.
     pub ambient_brightness_max: f32,
+    /// Relative image anchors; these do not represent lux or spectral exposure.
+    pub ambient_calibration: Option<AmbientCalibration>,
 
     /// Country selected for local emotional support information.
     pub support_country: SupportCountry,
 
     /// The daily curve.
     pub schedule: Schedule,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AmbientCalibration {
+    pub device_id: String,
+    pub camera_index: usize,
+    pub dark: f32,
+    pub bright: f32,
+}
+
+impl AmbientCalibration {
+    pub fn is_valid(&self) -> bool {
+        !self.device_id.is_empty()
+            && self.device_id.len() <= 4096
+            && self.dark.is_finite()
+            && self.bright.is_finite()
+            && (0.02..=0.98).contains(&self.dark)
+            && (0.02..=0.98).contains(&self.bright)
+            // A small contrast can be image noise or automatic exposure compensation.
+            && self.bright - self.dark >= 0.10
+    }
+
+    pub fn brightness(&self, device_id: &str, signal: f32, low: f32, high: f32) -> Option<f32> {
+        if !self.is_valid()
+            || self.device_id != device_id
+            || !signal.is_finite()
+            || !(self.dark..=self.bright).contains(&signal)
+        {
+            return None;
+        }
+        let fraction = (signal - self.dark) / (self.bright - self.dark);
+        Some(low + (high - low) * fraction)
+    }
+}
+
+fn finite_clamp(value: f32, fallback: f32, min: f32, max: f32) -> f32 {
+    if value.is_finite() { value } else { fallback }.clamp(min, max)
 }
 
 impl Default for Config {
@@ -139,6 +181,8 @@ impl Default for Config {
             wake: "07:00".to_string(),
             bed: "23:00".to_string(),
             min_brightness: 0.25,
+            day_brightness_max: 0.85,
+            rest_brightness_max: 0.25,
             gamma_warm_floor_k: 3400.0,
             tick_seconds: 30,
             max_volume: 0.35,
@@ -150,8 +194,9 @@ impl Default for Config {
             ambient_enabled: false,
             ambient_camera_index: 0,
             ambient_sample_interval_seconds: 30,
-            ambient_brightness_min: 0.35,
-            ambient_brightness_max: 1.00,
+            ambient_brightness_min: 0.25,
+            ambient_brightness_max: 0.85,
+            ambient_calibration: None,
             support_country: SupportCountry::Brazil,
             schedule: default_schedule(),
         }
@@ -223,6 +268,12 @@ fn default_schedule() -> Schedule {
 }
 
 impl Config {
+    pub fn camera_is_calibrated(&self) -> bool {
+        self.ambient_calibration.as_ref().is_some_and(|value| {
+            value.camera_index == self.ambient_camera_index && value.is_valid()
+        })
+    }
+
     pub fn preserve_colors(&self) -> bool {
         self.color_critical_work || self.color_vision_deficiency
     }
@@ -296,13 +347,28 @@ impl Config {
             .window_azimuth_deg
             .filter(|value| value.is_finite())
             .map(|value| value.rem_euclid(360.0));
-        self.min_brightness = self.min_brightness.clamp(0.15, 0.80);
+        self.min_brightness = finite_clamp(self.min_brightness, 0.25, 0.15, 0.80);
+        self.day_brightness_max =
+            finite_clamp(self.day_brightness_max, 0.85, self.min_brightness, 1.0);
+        self.rest_brightness_max = finite_clamp(
+            self.rest_brightness_max,
+            0.25,
+            self.min_brightness,
+            self.day_brightness_max,
+        );
         self.gamma_warm_floor_k = self.gamma_warm_floor_k.clamp(3000.0, 4500.0);
         self.tick_seconds = self.tick_seconds.clamp(5, 120);
         self.max_volume = self.max_volume.clamp(0.0, 0.70);
         self.ambient_sample_interval_seconds = self.ambient_sample_interval_seconds.clamp(2, 120);
-        self.ambient_brightness_min = self.ambient_brightness_min.clamp(0.35, 1.0);
-        self.ambient_brightness_max = self.ambient_brightness_max.clamp(0.35, 1.0);
+        self.ambient_brightness_min = finite_clamp(self.ambient_brightness_min, 0.25, 0.15, 1.0);
+        self.ambient_brightness_max = finite_clamp(self.ambient_brightness_max, 0.85, 0.15, 1.0);
+        if self
+            .ambient_calibration
+            .as_ref()
+            .is_some_and(|value| !value.is_valid())
+        {
+            self.ambient_calibration = None;
+        }
         if self.ambient_brightness_max < self.ambient_brightness_min {
             std::mem::swap(
                 &mut self.ambient_brightness_min,
@@ -368,6 +434,51 @@ fn parse_hhmm(s: &str) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn calibration_rejects_wrong_device_missing_contrast_and_extrapolation() {
+        let calibration = AmbientCalibration {
+            device_id: "camera-a".into(),
+            camera_index: 0,
+            dark: 0.2,
+            bright: 0.6,
+        };
+        assert!(
+            (calibration.brightness("camera-a", 0.4, 0.25, 0.85).unwrap() - 0.55).abs() < 0.001
+        );
+        for (device, signal) in [
+            ("camera-b", 0.4),
+            ("camera-a", 0.1),
+            ("camera-a", 0.7),
+            ("camera-a", f32::NAN),
+        ] {
+            assert!(calibration.brightness(device, signal, 0.25, 0.85).is_none());
+        }
+        for (dark, bright) in [(0.4, 0.41), (0.6, 0.2), (f32::NAN, 0.8), (0.2, 1.0)] {
+            assert!(
+                !AmbientCalibration {
+                    dark,
+                    bright,
+                    ..calibration.clone()
+                }
+                .is_valid()
+            );
+        }
+    }
+
+    #[test]
+    fn personal_brightness_bounds_remain_ordered_with_legacy_and_invalid_values() {
+        let mut cfg: Config = toml::from_str("min_brightness = 0.6").unwrap();
+        cfg.sanitize();
+        assert_eq!(cfg.rest_brightness_max, 0.6);
+        cfg.min_brightness = f32::NAN;
+        cfg.day_brightness_max = f32::NEG_INFINITY;
+        cfg.rest_brightness_max = f32::NAN;
+        cfg.sanitize();
+        assert_eq!(cfg.min_brightness, 0.25);
+        assert_eq!(cfg.day_brightness_max, 0.85);
+        assert_eq!(cfg.rest_brightness_max, 0.25);
+    }
 
     #[test]
     fn default_config_roundtrips_through_toml() {
@@ -451,7 +562,7 @@ noise = "pink"
         cfg.sanitize();
         assert!(cfg.ambient_sample_interval_seconds >= 2);
         assert!(cfg.ambient_brightness_min <= cfg.ambient_brightness_max);
-        assert!((cfg.ambient_brightness_min - 0.35).abs() < f32::EPSILON);
+        assert!((cfg.ambient_brightness_min - 0.15).abs() < f32::EPSILON);
         assert!((cfg.ambient_brightness_max - 1.0).abs() < f32::EPSILON);
     }
 

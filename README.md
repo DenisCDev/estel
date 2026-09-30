@@ -59,7 +59,7 @@ versão instalada.
 
 Na bandeja:
 
-- **Alta / Média / Suave** — força da curva; Média é o padrão para novas instalações
+- **Alta / Média / Suave** — força da cor e do som, sem alterar o brilho confortável; Média é o padrão para novas instalações
 - **Ruído noturno opcional** — rosa ou marrom, com transições suaves e limite digital de ganho; o volume real depende do dispositivo
 - **Pausar** — devolve a tela agora, sem fechar
 - **Configurações…** — acordar, dormir, luz, pausa visual e apoio emocional
@@ -85,12 +85,12 @@ ligada, o Estel pausa os ajustes de cor e brilho da tela; o som opcional pode
 continuar. Não há diagnóstico nem filtro universal para daltonismo. As fontes e
 os limites dessa escolha estão em [decisões verificadas](docs/VERIFIED-DECISIONS.md).
 
-Se a câmera falhar depois de medir a luz, o Estel mantém a última leitura por
-até cinco minutos. Depois volta gradualmente ao brilho calculado pelo horário;
+Se a câmera falhar ou sua leitura for rejeitada, o Estel descarta essa leitura
+e volta gradualmente ao brilho calculado pelo horário e pelo clima opcional;
 mudanças automáticas de brilho são limitadas a 6 pontos percentuais por ajuste.
 Mudanças automáticas de cor também são graduais. Alterar apenas o intervalo de
 leitura da câmera não descarta a medição atual. O menu da bandeja informa quando
-a última leitura está sendo mantida. Se outro aplicativo estiver usando a
+o ajuste voltou ao horário. Se outro aplicativo estiver usando a
 câmera, libere-a para tentar novamente; o log do Estel registra uma orientação
 para essa falha.
 
@@ -117,23 +117,31 @@ versão Windows.
 |---|---|---|
 | Temperatura de cor | Ajustar a aparência da tela ao longo do dia conforme preferência | Curva gradual em mired, com transições suaves |
 | Brilho | Evitar uma tela desconfortavelmente clara ou escura | DDC no monitor ou camada escura no notebook; ajuste pessoal continua importante |
-| Luz ambiente no Windows | Corrigir suavemente o brilho de base pela claridade aproximada | Desligada em novas configurações; quando ativada, a câmera mede a média de um quadro, descarta-o localmente e corrige 35% da diferença para a curva por horário |
+| Luz ambiente no Windows | Corrigir suavemente o brilho de base pela claridade aproximada | Desligada em novas configurações; exige duas referências relativas, confere cinco quadros estáveis e corrige 35% da diferença para a curva por horário dentro dos limites pessoais |
 | Clima e janela no Windows | Estimar a claridade quando a câmera não mede | Consulta opcional de radiação solar e posição aproximada do sol ajustam o brilho por horário; a janela pode ser configurada como de frente, de costas ou de lado para a tela |
 | Estabilidade visual | Evitar mudanças bruscas e cintilação criada pelo aplicativo | Sem piscar a interface nem simular PWM por software |
 | Som opcional no Windows | Oferecer um fundo sonoro para quem o prefere | Ruído rosa ou marrom, troca com saída e entrada graduais; o limite digital não mede o volume nos ouvidos |
 | Pausa visual e aterramento no Windows | Oferecer ações simples quando a pessoa quiser | Pausa visual de 20 s e exercício de atenção aos sentidos; contatos de apoio por país |
 
-A curva base na intensidade Alta (Média e Suave reduzem o efeito):
+A curva de cor na intensidade Alta (Média e Suave reduzem cor e som, sem elevar brilho):
 
 | Fase | CCT | Brilho |
 |---|---|---|
 | Acordar | rampa → 6500 K | subindo |
-| Dia | 6500 K | ~85–90 % |
+| Dia | 6500 K | teto pessoal, inicialmente 85% no Windows |
 | Início da noite | 6500 → 3400 K | caindo |
 | Pré-sono | 3400 → 2700 K | baixo |
 | Noite | 1900–2300 K | mínimo confortável |
 
 Gama do Windows 11 recusa rampas agressivas em silêncio. Estel não tenta escurecer a tela por gama abaixo de ~50 %: o extra vai para DDC (monitor externo) ou para a sobreposição (notebook / HDR).
+
+No Windows 0.2.8, **Brilho mínimo**, **Máximo durante o dia** e **Máximo à noite / descanso**
+são preferências separadas da intensidade da cor. O teto de descanso começa em
+25% (nunca abaixo do piso escolhido), após o pôr do sol e das três horas antes
+de dormir até acordar, inclusive em rotinas que cruzam a meia-noite ou dormem
+de dia. Cor e brilho caminham gradualmente para os alvos; uma transição pode
+levar alguns minutos. São pontos de partida ajustáveis, sem equivalência a lux
+ou garantia de benefício clínico. O Android mantém sua implementação própria.
 
 ---
 
@@ -141,7 +149,7 @@ Gama do Windows 11 recusa rampas agressivas em silêncio. Estel não tenta escur
 
 | Alegação | Evidência | Decisão |
 |---|---|---|
-| Óculos “bloqueadores de azul” | Provavelmente nulo (Cochrane 2023) | Não |
+| Óculos “bloqueadores de azul” | Podem não reduzir fadiga de curto prazo; baixa certeza para esse desfecho (Cochrane 2023) | Não |
 | Batidas binaurais | Sem demonstração de benefício para este aplicativo | Não |
 | Cor azul como tratamento calmante | Estudos de cor e emoção dependem do contexto e não testam o Estel | Sem promessa terapêutica por matiz |
 | 432 Hz terapêutico | Fraco | Sem sino, sem alegação |
@@ -153,10 +161,13 @@ digitada ou as coordenadas ao Open-Meteo; os quadros da câmera permanecem locai
 ### Luz ambiente por câmera (Windows)
 
 O ajuste por câmera vem desligado em novas instalações. Quem quiser pode ativar
-a opção e escolher a webcam nas configurações. O Estel abre a câmera apenas
-para obter um quadro, calcula
-a luminância média de
-até 8.000 pixels, descarta o quadro em memória e fecha o acesso. A leitura
+a opção e escolher a webcam nas configurações. Capture **ambiente escuro** e,
+depois, **ambiente claro**, mantendo câmera e tela na mesma posição e usando
+luz ambiente difusa. As etapas podem ser feitas em momentos diferentes enquanto
+o painel estiver aberto. Até as referências serem aceitas, usa horário/clima.
+O Estel aguarda pelo menos 500 ms após abrir a câmera e confere cinco quadros,
+calculando a média de até 8.000 pixels por quadro. Descarta os quadros em memória
+e fecha o acesso. A leitura
 padrão acontece a cada 30 segundos, tem limite de 5 segundos e o resultado é
 suavizado antes de alterar o brilho.
 
@@ -167,13 +178,22 @@ Mudanças feitas na janela de configurações são aplicadas assim que são salv
 Não há gravação, visualização ou transmissão dos quadros, identificação de pessoas, rosto, olhos,
 presença ou estado emocional. Uma webcam comum não é um luxímetro: exposição
 automática e posição da câmera mudam a leitura. Por isso o recurso trabalha
-com um sinal relativo e deixa a pessoa definir os limites para ambiente escuro
-e claro. Com a câmera ativa, o brilho estimado corrige parcialmente a curva por
-horário, sem substituir o limite noturno por uma leitura de 100%. A câmera tem
+com a claridade da imagem como sinal experimental, sem calibração fotométrica.
+As referências relativas substituem a conversão fixa de pixels; não calibram
+a exposição nem transformam pixels em lux. Pares sem contraste suficiente,
+quadros instáveis/saturados, outro dispositivo ou leituras fora das referências
+são rejeitados. Se a exposição automática esconder a diferença entre ambientes,
+use o ajuste por horário. Refaça as referências ao mover a câmera. Os sliders
+de ambiente escuro/claro continuam ajustando a saída de brilho. Com a câmera ativa,
+o brilho estimado corrige parcialmente a curva por
+horário, respeitando os tetos pessoais de dia e descanso. O clima respeita os
+mesmos tetos, inclusive antes de dormir quando ainda há sol. A câmera tem
 prioridade sobre a estimativa de clima; desativar a opção restaura a curva com
 clima opcional e não abre a câmera. Se o Windows tiver um sensor de luz ambiente,
 experimente o brilho automático do próprio sistema primeiro e evite dois
-controladores automáticos ao mesmo tempo.
+controladores automáticos ao mesmo tempo. Para testar só o brilho do Windows,
+pause os ajustes de tela do Estel; isso também pausa sua alteração de cor.
+Desligar apenas a câmera mantém o brilho por horário do Estel em funcionamento.
 
 ### Localização, clima e orientação (Windows)
 
@@ -192,8 +212,9 @@ se essa condição não se aplicar. O serviço disponibiliza os dados sob CC BY 
 
 Se há uma janela perto, informe sua orientação pela bússola do celular e se a
 tela fica de frente, de costas ou de lado para ela. O cálculo usa a posição
-aproximada do sol e a radiação direta para compensar reflexos, até um limite
-pequeno. A câmera, quando funciona, sempre tem prioridade sobre essa estimativa.
+aproximada do sol e a radiação direta para estimar um acréscimo limitado de
+brilho. Não mede nem remove reflexos, cortinas ou luz artificial no cômodo.
+A câmera, quando funciona, sempre tem prioridade sobre essa estimativa.
 Nascer e pôr do sol da localização continuam definindo a curva de cor.
 
 A janela de configurações usa quatro cenas ilustradas derivadas do mascote
@@ -240,18 +261,61 @@ Detalhes de API Win32: `docs/VERIFIED-DECISIONS.md`.
 
 ## Referências
 
-- Brown TM et al. *PLOS Biology* 20(3):e3001571, 2022 — consenso melanópico EDI
-- Singh S et al. *Cochrane Database of Systematic Reviews* 2023, Issue 8, CD013244 — óculos de luz azul
+Pesquisa atualizada em **29/09/2026**. A
+[auditoria de estudos recentes e do algoritmo](docs/RESEARCH-AUDIT-2026.md)
+compara a qualidade das fontes, os ajustes com e sem webcam e as mudanças
+justificadas. O [catálogo de evidências](docs/COMFORT-EVIDENCE.md) detalha cada recurso.
+Publicação recente não equivale a evidência de alta certeza: nenhuma das fontes
+abaixo valida os coeficientes do Estel ou uma webcam sem calibração como luxímetro.
+
+### Base atual e atualizações de 2024–2026
+
+- [CIE PS 001:2024](https://www.cie.co.at/publications/cie-position-statement-integrative-lighting-recommending-proper-light-proper-time-3rd)
+  — posição atualizada sobre luz no horário adequado e metrologia CIE S 026.
+- [ISO/CIE 8995-1:2025](https://committee.iso.org/standard/76342.html?browse=tc)
+  — iluminação de locais de trabalho; requisitos do ambiente, não porcentagem ideal de tela.
+- [Spitschan et al., BMJ Public Health, 2025](https://doi.org/10.1136/bmjph-2025-003205)
+  — consenso Delphi de comunicação sobre luz e saúde; não ensaio de um aplicativo.
+- [Spitschan et al., BMC Medicine, 2026](https://pubmed.ncbi.nlm.nih.gov/41612386/)
+  — consenso sobre lacunas de medição, dose–resposta e eficácia de intervenções.
+- [Yang et al., 2026](https://doi.org/10.2150/jstl.IEIJ250000672)
+  — revisão de parâmetros de luz e fadiga digital; contexto mecanístico, sem curva validada para webcam.
+- [Massa et al., 2025](https://pubmed.ncbi.nlm.nih.gov/42376338/)
+  — ensaio de brilho e software de cor, com 47 participantes que concluíram; evidência preliminar.
+- [Redondo et al., 2025](https://doi.org/10.1016/j.exer.2025.110463)
+  — pausas durante leitura; não estabelece uma regra universal de 20 segundos.
+- [TFOS DEWS III, 2025](https://doi.org/10.1016/j.ajo.2025.05.039)
+  — revisão de manejo do olho seco; não valida regulagem de brilho por câmera.
+- [Xu et al., npj Digital Medicine, 2025](https://doi.org/10.1038/s41746-025-02053-8)
+  — ensaio pequeno de treino de piscar em usuários de smartphone com olho seco.
+- [CIE 252:2024](https://www.cie.co.at/publications/assessment-discomfort-glare-daylight-buildings)
+  — avaliação de ofuscamento por luz diurna; azimute e clima sozinhos não medem reflexos.
+- [CIE 249:2022 e corrigenda de 2026](https://www.cie.co.at/publications/visual-aspects-time-modulated-lighting-systems)
+  — modulação temporal da luz; exige avaliação do hardware.
+- [Basner et al., SLEEP, 2026](https://doi.org/10.1093/sleep/zsag001)
+  — estudo controlado de ruído rosa durante sono; não justifica som automático para dormir.
+- [Brown TM et al., PLOS Biology, 2022](https://doi.org/10.1371/journal.pbio.3001571)
+  — consenso melanópico EDI, mantido e complementado pela CIE de 2024.
+- [Singh S et al., Cochrane, 2023, CD013244](https://www.cochrane.org/evidence/CD013244_blue-light-filtering-spectacle-lenses-visual-performance-macular-back-part-eye-protection-and)
+  — 17 ensaios de óculos, não de filtros de tela; certeza varia por desfecho.
+- [OSHA — iluminação em estações de computador](https://www.osha.gov/etools/computer-workstations/workstation-environment)
+  — reflexos, contraste e fadiga visual.
+
+### Estudos de contexto e referências históricas
+
 - Wilkins AJ et al. *Lighting Research & Technology* 21(1):11–18, 1989 — flicker e cefaleia
-- Hazell & Wilkins. *Psychological Medicine*, 1990 — flicker e FC em agorafobia
-- Wilms L & Oberfeld D. *Psychological Research*, 2018 — brilho, saturação e emoção em estímulos controlados
-- Reutimann et al. *Royal Society Open Science* 10:230432, 2023 — cor e excitação em RV
-- IEEE Std 1789-2015 — modulação de luz
-- Blumenthal TD & Berg WK. *Psychophysiology*, 1986 — rise time e sobressalto
+- [Hazell & Wilkins, 1990](https://doi.org/10.1017/S0033291700017098)
+  — lâmpadas fluorescentes e agorafobia; não teste de escurecimento de tela.
+- [Wilms L & Oberfeld D, 2018](https://doi.org/10.1007/s00426-017-0880-8)
+  — brilho, saturação e emoção em estímulos controlados, não tratamento de ansiedade.
+- [Weijs et al., 2023](https://pubmed.ncbi.nlm.nih.gov/37830019/)
+  — cor e excitação em RV; corrige a autoria principal antes indicada como Reutimann.
+- [IEEE 1789-2015](https://standards.ieee.org/ieee/1789/4479/)
+  — referência histórica de modulação de LEDs; **Inactive-Reserved desde 26/03/2026**.
+- [Blumenthal TD & Berg WK, 1986](https://doi.org/10.1111/j.1469-8986.1986.tb00682.x)
+  — estímulos acústicos breves e intensos; não valida o fade de quatro segundos do Estel.
 - Sheedy JE et al. *Ergonomics* 48(9):1114–1128, 2005,
   [doi:10.1080/00140130500208414](https://doi.org/10.1080/00140130500208414)
   — luminância ao redor da tela e adaptação visual
 - [ISO/TR 9241-610:2022](https://www.iso.org/obp/ui/en/#iso:std:iso:tr:9241:-610:ed-1:v1:en)
   — impacto da luz e da iluminação em sistemas interativos
-- [OSHA — iluminação em estações de computador](https://www.osha.gov/etools/computer-workstations/workstation-environment)
-  — reflexos, contraste e fadiga visual

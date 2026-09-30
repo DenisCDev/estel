@@ -103,15 +103,22 @@ Regras de produto que prevalecem sobre o resto:
 
 ## Luz ambiente por câmera
 
-- Media Foundation enumera câmeras e lê quadros YUY2. Uma leitura sem quadro
-  pode indicar um evento do fluxo; o leitor tenta até oito vezes antes de falhar.
+- Media Foundation enumera câmeras e lê quadros YUY2. Depois de pelo menos
+  500 ms, verifica cinco quadros com variação máxima de 0,05 na média normalizada,
+  sem valores fora de 0,02–0,98. Até 90 tentativas de leitura e prazo externo de 5 s.
 - A captura roda em um processo auxiliar com limite de 5 s, acionado por uma
-  thread dedicada. Em novas configurações, a opção vem desligada. Quando desligada,
-  a thread espera nova configuração e não abre a câmera. Uma leitura válida
-  calcula no máximo 8.000 amostras, descarta o quadro e só envia um `f32` de
+  thread dedicada. Em novas configurações, a opção vem desligada. Quando desligada
+  ou sem referências aceitas para a câmera escolhida, a thread espera nova
+  configuração e não abre a câmera. Uma leitura válida
+  calcula no máximo 8.000 amostras por quadro, descarta os quadros e só envia um `f32` de
   brilho ao loop principal.
 - A câmera tem prioridade sobre a estimativa de clima, mas corrige apenas 35%
   da diferença para a curva por horário. Sua leitura é limitada pela configuração
   da pessoa e suavizada por EWMA (20%).
+  Referências relativas são aceitas somente com contraste de pelo menos 0,10,
+  mesma identidade de dispositivo e sinal dentro da faixa. Esses limiares são
+  escolhas de engenharia, não calibração fotométrica. Falhas descartam a leitura
+  e devolvem o cálculo ao horário/clima opcional com transição gradual. Uma
+  recalibração só substitui referências salvas após o novo par ser válido.
   A câmera não é usada como luxímetro calibrado, biometria, detector de rosto,
   olhos, presença, emoção ou atenção.

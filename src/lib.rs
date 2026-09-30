@@ -9,6 +9,7 @@ pub mod audio;
 #[cfg(windows)]
 pub mod brightness;
 pub mod color;
+pub mod comfort;
 pub mod config;
 #[cfg(windows)]
 pub mod display;

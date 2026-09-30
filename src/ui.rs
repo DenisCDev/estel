@@ -15,7 +15,8 @@ use windows::core::w;
 #[cfg(windows)]
 use winit::platform::windows::EventLoopBuilderExtWindows;
 
-use crate::config::{Config, Intensity, ScreenWindowRelation, SupportCountry};
+use crate::ambient::{self, AmbientSample};
+use crate::config::{AmbientCalibration, Config, Intensity, ScreenWindowRelation, SupportCountry};
 use crate::location;
 use crate::update::{self, DownloadedInstaller, Release};
 use crate::weather::{self, Place};
@@ -142,6 +143,12 @@ pub fn run(initial: Config, tx: Sender<Config>) -> eframe::Result {
     )
 }
 
+struct CalibrationCapture {
+    dark: bool,
+    camera_index: usize,
+    rx: Receiver<Result<AmbientSample, String>>,
+}
+
 struct SettingsApp {
     cfg: Config,
     tx: Sender<Config>,
@@ -157,6 +164,9 @@ struct SettingsApp {
     camera_error: Option<String>,
     camera_scan_pending: bool,
     camera_scan: Receiver<Result<Vec<String>, String>>,
+    calibration_capture: Option<CalibrationCapture>,
+    calibration_dark: Option<AmbientSample>,
+    calibration_message: Option<String>,
     location_request: bool,
     location_scan: Option<Receiver<Result<(f64, f64), String>>>,
     location_error: Option<String>,
@@ -204,6 +214,9 @@ impl SettingsApp {
             camera_error: None,
             camera_scan_pending: true,
             camera_scan,
+            calibration_capture: None,
+            calibration_dark: None,
+            calibration_message: None,
             location_request,
             location_scan: None,
             location_error: None,
@@ -227,6 +240,78 @@ impl SettingsApp {
         self.last_edit = Instant::now();
         self.status.clear();
         self.save_error = None;
+    }
+
+    fn start_calibration_capture(&mut self, dark: bool) {
+        self.calibration_message = None;
+        if dark {
+            self.calibration_dark = None;
+        }
+        let camera_index = self.cfg.ambient_camera_index;
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(ambient::sample_luminance_in_helper(camera_index));
+        });
+        self.calibration_capture = Some(CalibrationCapture {
+            dark,
+            camera_index,
+            rx,
+        });
+    }
+
+    fn cancel_calibration_capture(&mut self) {
+        self.calibration_capture = None;
+        self.calibration_message = Some("Leitura descartada; referências anteriores preservadas. A captura encerra em até 5 segundos.".into());
+    }
+
+    fn poll_calibration(&mut self) {
+        let Some(capture) = self.calibration_capture.as_ref() else {
+            return;
+        };
+        let result = match capture.rx.try_recv() {
+            Ok(result) => result,
+            Err(TryRecvError::Empty) => return,
+            Err(TryRecvError::Disconnected) => {
+                Err("A leitura foi interrompida. Tente novamente.".into())
+            }
+        };
+        let capture = self
+            .calibration_capture
+            .take()
+            .expect("capture checked above");
+        if capture.camera_index != self.cfg.ambient_camera_index
+            || !self.cfg.ambient_enabled
+            || self.cfg.preserve_colors()
+        {
+            self.calibration_message =
+                Some("Leitura descartada porque a câmera ou a opção mudou.".into());
+            return;
+        }
+        match result {
+            Err(error) => self.calibration_message = Some(error),
+            Ok(sample) if capture.dark => {
+                self.calibration_dark = Some(sample);
+                self.calibration_message = Some("Referência escura capturada. Com iluminação ambiente mais clara, capture a segunda referência.".into());
+            }
+            Ok(sample) => {
+                let Some(dark) = self.calibration_dark.as_ref() else {
+                    return;
+                };
+                let calibration = AmbientCalibration {
+                    device_id: sample.device_id.clone(),
+                    camera_index: capture.camera_index,
+                    dark: dark.luminance,
+                    bright: sample.luminance,
+                };
+                if sample.device_id != dark.device_id || !calibration.is_valid() {
+                    self.calibration_message = Some("As referências não distinguem bem claro de escuro ou são de câmeras diferentes. A exposição automática pode esconder a diferença. Refaça com iluminação ambiente distinta e o mesmo enquadramento; se persistir, use o ajuste por horário.".into());
+                    return;
+                }
+                self.cfg.ambient_calibration = Some(calibration);
+                self.calibration_message = Some("Referências aceitas. A câmera pode ajustar o brilho dentro dessa faixa; confira o conforto e refaça se mudar o enquadramento.".into());
+                self.touch();
+            }
+        }
     }
 
     fn flush(&mut self) {
@@ -408,7 +493,9 @@ fn poster_cover(
         );
     }
     let mut changed = false;
-    let camera_label = if cfg.ambient_enabled {
+    let camera_label = if cfg.ambient_enabled && !cfg.camera_is_calibrated() {
+        "CÂMERA: AGUARDANDO"
+    } else if cfg.ambient_enabled {
         "USAR CÂMERA: SIM"
     } else {
         "USAR CÂMERA: NÃO"
@@ -674,11 +761,13 @@ impl eframe::App for SettingsApp {
                 Err(TryRecvError::Empty) => {}
             }
         }
+        self.poll_calibration();
         if self.dirty && self.last_edit.elapsed() > Duration::from_millis(400) {
             self.flush();
         }
         if self.dirty
             || self.camera_scan_pending
+            || self.calibration_capture.is_some()
             || self.location_scan.is_some()
             || self.place_search.is_some()
             || self
@@ -737,6 +826,9 @@ impl eframe::App for SettingsApp {
                     self.touch();
                 }
                 ui.add_space(14.0);
+                if self.cfg.ambient_enabled && !self.cfg.camera_is_calibrated() {
+                    ui.label(RichText::new("Câmera aguardando referências. Role até 06 / LUZ AMBIENTE para capturar escuro e claro; enquanto isso, o brilho segue horário e clima opcional.").size(14.0).color(INK));
+                }
                 Frame::new()
                     .fill(BLUE)
                     .stroke(Stroke::new(2.0_f32, INK))
@@ -802,7 +894,7 @@ impl eframe::App for SettingsApp {
                 }
                 ui.add_space(32.0);
                 ui.label(RichText::new("SEU MUNDO / SEUS AJUSTES").font(poster_font(28.0)).color(DEEP_GREEN));
-                ui.label(RichText::new("Escolha o ajuste que fica confortável para você. Média é o ponto de partida; Suave deixa a cor mais próxima da original.").size(14.0).color(INK));
+                ui.label(RichText::new("Média é o ponto de partida; Suave deixa a cor mais próxima da original. A intensidade da cor e do som não altera seus limites de brilho.").size(14.0).color(INK));
                 ui.add_space(18.0);
 
                 ui.columns(2, |columns| {
@@ -964,6 +1056,10 @@ impl eframe::App for SettingsApp {
                     self.touch();
                 }
                 ui.label(RichText::new("Ajuste até o texto ficar legível sem a tela parecer intensa demais. Esse mínimo vale para todos os ajustes da tela.").size(12.0).color(MUTED));
+                if ui.add(egui::Slider::new(&mut self.cfg.day_brightness_max, self.cfg.min_brightness..=1.0).text("Máximo durante o dia").custom_formatter(|value, _| format!("{:.0}%", value * 100.0))).changed() { self.touch(); }
+                self.cfg.rest_brightness_max = self.cfg.rest_brightness_max.clamp(self.cfg.min_brightness, self.cfg.day_brightness_max.max(self.cfg.min_brightness));
+                if ui.add(egui::Slider::new(&mut self.cfg.rest_brightness_max, self.cfg.min_brightness..=self.cfg.day_brightness_max.max(self.cfg.min_brightness)).text("Máximo à noite / descanso").custom_formatter(|value, _| format!("{:.0}%", value * 100.0))).changed() { self.touch(); }
+                ui.label(RichText::new("O limite de descanso vale após o pôr do sol e das 3 horas antes de dormir até acordar, mesmo sem câmera. Começa em 25%; ajuste pela legibilidade e pelo seu conforto. Os percentuais não medem a luz nos olhos.").size(12.0).color(MUTED));
                 if toggle_sticker(ui, &mut self.cfg.weather_enabled, "USAR CLIMA", BLUE) {
                     self.touch();
                 }
@@ -1019,12 +1115,12 @@ impl eframe::App for SettingsApp {
                 }
                 ui.label(
                     RichText::new(
-                        "Opcional e local: a câmera estima a luz de um quadro e o descarta. Não grava, transmite ou analisa pessoas. A exposição automática pode distorcer a leitura.",
+                        "Opcional e local: a câmera compara a claridade da imagem com duas referências suas. Não grava, transmite ou analisa pessoas. A exposição automática pode distorcer a leitura; a calibração é relativa e não mede lux.",
                     )
                     .size(12.0)
                     .color(MUTED),
                 );
-                ui.label(RichText::new("Se o Windows oferece brilho automático por sensor de luz, experimente essa opção primeiro. Escolha só uma leitura do ambiente: sensor do Windows ou câmera do Estel.").size(12.0).color(INK));
+                ui.label(RichText::new("Se o Windows oferece brilho automático por sensor de luz, experimente essa opção primeiro. Para usá-lo sozinho, pause os ajustes de tela do Estel na bandeja; desligar só a câmera mantém o brilho por horário.").size(12.0).color(INK));
                 ui.hyperlink_to("Abrir ajustes de tela do Windows", "ms-settings:display");
                 if self.cfg.ambient_enabled {
                     ui.add_space(6.0);
@@ -1053,6 +1149,8 @@ impl eframe::App for SettingsApp {
                             }
                         });
                     if camera_changed {
+                        self.calibration_dark = None;
+                        self.calibration_message = None;
                         self.touch();
                     }
                     if self.camera_names.is_empty() {
@@ -1090,8 +1188,17 @@ impl eframe::App for SettingsApp {
                     {
                         self.touch();
                     }
+                    ui.label(if self.cfg.camera_is_calibrated() { "Referências salvas para esta câmera" } else { "Sem referências: o brilho segue o horário e o clima opcional" });
+                    ui.label(RichText::new("Mantenha a câmera na posição de uso e a mesma tela. Capture um ambiente com pouca luz e, depois, com mais luz difusa, sem apontar lâmpadas à lente nem cobri-la. Você pode fazer as etapas em momentos diferentes enquanto este painel estiver aberto. Referências anteriores só são substituídas quando as duas novas forem aceitas.").size(12.0).color(MUTED));
+                    let available = self.calibration_capture.is_none() && !self.camera_scan_pending
+                        && self.camera_names.get(self.cfg.ambient_camera_index).is_some() && !self.cfg.preserve_colors();
+                    ui.horizontal_wrapped(|ui| {
+                        if ui.add_enabled(available, egui::Button::new("1 · CAPTURAR AMBIENTE ESCURO")).clicked() { self.start_calibration_capture(true); }
+                        if ui.add_enabled(available && self.calibration_dark.is_some(), egui::Button::new("2 · CAPTURAR AMBIENTE CLARO")).clicked() { self.start_calibration_capture(false); }
+                    });
+                    if self.cfg.preserve_colors() { ui.label("Desative a preservação de cores para calibrar e usar os ajustes de tela."); }
                     ui.label("Faixa de brilho estimada pela câmera");
-                    if ui.add(egui::Slider::new(&mut self.cfg.ambient_brightness_min, 0.35..=self.cfg.ambient_brightness_max).text("Ambiente escuro").custom_formatter(|value, _| format!("{:.0}%", value * 100.0))).changed() {
+                    if ui.add(egui::Slider::new(&mut self.cfg.ambient_brightness_min, 0.15..=self.cfg.ambient_brightness_max).text("Ambiente escuro").custom_formatter(|value, _| format!("{:.0}%", value * 100.0))).changed() {
                         self.touch();
                     }
                     if ui.add(egui::Slider::new(&mut self.cfg.ambient_brightness_max, self.cfg.ambient_brightness_min..=1.0).text("Ambiente claro").custom_formatter(|value, _| format!("{:.0}%", value * 100.0))).changed() {
@@ -1099,13 +1206,19 @@ impl eframe::App for SettingsApp {
                     }
                     ui.label(
                         RichText::new(
-                            "A câmera faz uma correção suave sobre o horário; depois do pôr do sol, não clareia acima da curva noturna. Não substitui um sensor de luz. Se falhar, o Estel usa clima e janela quando ativos, ou só o horário.",
+                            "A câmera corrige parte do brilho por horário e respeita seus limites de descanso. Quadros instáveis, saturados, de outro dispositivo ou fora das referências são rejeitados. Sem leitura válida, usa clima opcional ou horário. Refaça as referências se mover a câmera.",
                         )
                         .size(12.0)
                         .color(MUTED),
                     );
                     ui.label(RichText::new("O estado da leitura aparece no menu do ícone do Estel, ao lado do relógio. Se a câmera ficar indisponível, feche apps que a usam e confira as permissões no Windows.").size(12.0).color(MUTED));
                 }
+                if self.calibration_capture.is_some() {
+                    ui.spinner();
+                    ui.label("Lendo a câmera… prazo máximo de 5 segundos.");
+                    if ui.button("CANCELAR LEITURA").clicked() { self.cancel_calibration_capture(); }
+                }
+                if let Some(message) = &self.calibration_message { ui.label(RichText::new(message).size(12.0).color(INK)); }
                 });
                 });
 
@@ -1282,4 +1395,150 @@ fn split_hhmm(s: &str) -> (u32, u32) {
     let h = it.next().and_then(|x| x.parse().ok()).unwrap_or(7);
     let m = it.next().and_then(|x| x.parse().ok()).unwrap_or(0);
     (h.min(23), m.min(59))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn app() -> SettingsApp {
+        let cfg = Config {
+            ambient_enabled: true,
+            ambient_calibration: Some(AmbientCalibration {
+                device_id: "camera-a".into(),
+                camera_index: 0,
+                dark: 0.2,
+                bright: 0.6,
+            }),
+            ..Config::default()
+        };
+        let context = egui::Context::default();
+        let texture = context.load_texture(
+            "test",
+            egui::ColorImage::new([1, 1], vec![Color32::WHITE]),
+            egui::TextureOptions::LINEAR,
+        );
+        let (tx, _) = mpsc::channel();
+        let (_, camera_scan) = mpsc::channel();
+        SettingsApp {
+            cfg,
+            tx,
+            wake_h: 7,
+            wake_m: 0,
+            bed_h: 23,
+            bed_m: 0,
+            dirty: false,
+            last_edit: Instant::now(),
+            status: String::new(),
+            save_error: None,
+            camera_names: vec!["Câmera A".into(), "Câmera B".into()],
+            camera_error: None,
+            camera_scan_pending: false,
+            camera_scan,
+            calibration_capture: None,
+            calibration_dark: None,
+            calibration_message: None,
+            location_request: false,
+            location_scan: None,
+            location_error: None,
+            location_success: false,
+            place_query: String::new(),
+            place_search: None,
+            place_results: Vec::new(),
+            place_error: None,
+            selected_place: None,
+            update_state: UpdateState::Current,
+            mascot_sheet: None,
+            poster_collage: texture,
+            eye_break_until: None,
+            eye_break_complete: false,
+            grounding_open: false,
+        }
+    }
+
+    fn finish(app: &mut SettingsApp, dark: bool, result: Result<AmbientSample, String>) {
+        let (tx, rx) = mpsc::channel();
+        tx.send(result).unwrap();
+        app.calibration_capture = Some(CalibrationCapture {
+            dark,
+            camera_index: 0,
+            rx,
+        });
+        app.poll_calibration();
+    }
+
+    #[test]
+    fn failure_cancel_and_camera_roundtrip_preserve_saved_references() {
+        let mut app = app();
+        let previous = app.cfg.ambient_calibration.clone();
+        finish(&mut app, true, Err("Câmera ocupada".into()));
+        assert_eq!(app.cfg.ambient_calibration, previous);
+        app.cancel_calibration_capture();
+        assert_eq!(app.cfg.ambient_calibration, previous);
+        app.cfg.ambient_camera_index = 1;
+        assert!(!app.cfg.camera_is_calibrated());
+        app.cfg.ambient_camera_index = 0;
+        assert!(app.cfg.camera_is_calibrated());
+        assert_eq!(app.cfg.ambient_calibration, previous);
+        assert!(!app.dirty);
+    }
+
+    #[test]
+    fn only_a_valid_completed_pair_replaces_saved_references() {
+        let mut app = app();
+        let previous = app.cfg.ambient_calibration.clone();
+        finish(
+            &mut app,
+            true,
+            Ok(AmbientSample {
+                device_id: "camera-a".into(),
+                luminance: 0.3,
+            }),
+        );
+        assert_eq!(app.cfg.ambient_calibration, previous);
+        finish(
+            &mut app,
+            false,
+            Ok(AmbientSample {
+                device_id: "camera-a".into(),
+                luminance: 0.32,
+            }),
+        );
+        assert_eq!(app.cfg.ambient_calibration, previous);
+        finish(
+            &mut app,
+            false,
+            Ok(AmbientSample {
+                device_id: "camera-a".into(),
+                luminance: 0.8,
+            }),
+        );
+        let accepted = app.cfg.ambient_calibration.unwrap();
+        assert_eq!((accepted.dark, accepted.bright), (0.3, 0.8));
+        assert!(app.dirty);
+    }
+
+    #[test]
+    fn changed_disabled_or_preserved_camera_discards_inflight_result() {
+        for mode in 0..3 {
+            let mut app = app();
+            let previous = app.cfg.ambient_calibration.clone();
+            match mode {
+                0 => app.cfg.ambient_enabled = false,
+                1 => app.cfg.ambient_camera_index = 1,
+                _ => app.cfg.color_critical_work = true,
+            }
+            finish(
+                &mut app,
+                true,
+                Ok(AmbientSample {
+                    device_id: "camera-a".into(),
+                    luminance: 0.3,
+                }),
+            );
+            assert_eq!(app.cfg.ambient_calibration, previous);
+            assert!(app.calibration_dark.is_none());
+            assert!(app.calibration_message.unwrap().contains("descartada"));
+        }
+    }
 }

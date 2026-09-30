@@ -201,7 +201,7 @@ fn valid_coords(latitude: f64, longitude: f64) -> bool {
         && (-180.0..=180.0).contains(&longitude)
 }
 
-/// Conservative glare compensation, used only when no webcam reading exists.
+/// Approximate outdoor daylight adjustment, used only without a valid camera reading.
 pub fn fallback_brightness(
     scheduled: f32,
     weather: Weather,

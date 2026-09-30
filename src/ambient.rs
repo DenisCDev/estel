@@ -1,22 +1,31 @@
 //! Local, low-frequency ambient-light sampling through an opt-in camera.
 
+use serde::{Deserialize, Serialize};
 use std::process::{Command, Stdio};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use windows::Win32::Foundation::{CloseHandle, HANDLE, WAIT_ABANDONED, WAIT_OBJECT_0};
 use windows::Win32::Media::MediaFoundation::{
     IMFActivate, IMFMediaSource, MF_DEVSOURCE_ATTRIBUTE_FRIENDLY_NAME,
     MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE, MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_GUID,
-    MF_MT_MAJOR_TYPE, MF_MT_SUBTYPE, MF_SOURCE_READER_FIRST_VIDEO_STREAM, MF_VERSION,
-    MFCreateAttributes, MFCreateMediaType, MFCreateSourceReaderFromMediaSource,
-    MFEnumDeviceSources, MFMediaType_Video, MFSTARTUP_LITE, MFShutdown, MFStartup,
-    MFVideoFormat_YUY2,
+    MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_SYMBOLIC_LINK, MF_MT_MAJOR_TYPE, MF_MT_SUBTYPE,
+    MF_SOURCE_READER_FIRST_VIDEO_STREAM, MF_VERSION, MFCreateAttributes, MFCreateMediaType,
+    MFCreateSourceReaderFromMediaSource, MFEnumDeviceSources, MFMediaType_Video, MFSTARTUP_LITE,
+    MFShutdown, MFStartup, MFVideoFormat_YUY2,
 };
 use windows::Win32::System::Com::CoTaskMemFree;
-use windows::core::PWSTR;
+use windows::Win32::System::Threading::{CreateMutexW, ReleaseMutex, WaitForSingleObject};
+use windows::core::{PWSTR, w};
 
 use crate::config::Config;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AmbientSample {
+    pub device_id: String,
+    pub luminance: f32,
+}
 
 const MAX_PIXEL_SAMPLES: usize = 8_000;
 const SMOOTHING: f32 = 0.20;
@@ -50,8 +59,13 @@ fn run(mut config: Config, config_rx: Receiver<Config>, factor_tx: Sender<Result
     let mut last_error: Option<String> = None;
 
     loop {
-        if !config.ambient_enabled || config.preserve_colors() {
+        if !config.ambient_enabled || config.preserve_colors() || !config.camera_is_calibrated() {
             smoothed = None;
+            if config.ambient_enabled && !config.preserve_colors() {
+                let _ = factor_tx.send(Err(
+                    "Calibre a câmera no painel; por enquanto, o brilho segue o horário.".into(),
+                ));
+            }
             match config_rx.recv() {
                 Ok(next) => {
                     config = next;
@@ -62,13 +76,13 @@ fn run(mut config: Config, config_rx: Receiver<Config>, factor_tx: Sender<Result
             continue;
         }
 
-        match sample_luminance_in_helper(config.ambient_camera_index) {
-            Ok(luminance) => {
-                let measured = factor_for_luminance(
-                    luminance,
-                    config.ambient_brightness_min,
-                    config.ambient_brightness_max,
-                );
+        let reading = sample_luminance_in_helper(config.ambient_camera_index).and_then(|sample| {
+            config.ambient_calibration.as_ref().and_then(|calibration| calibration.brightness(
+                &sample.device_id, sample.luminance, config.ambient_brightness_min, config.ambient_brightness_max,
+            )).ok_or_else(|| "A câmera saiu da faixa calibrada ou mudou de dispositivo; confira a calibração no painel.".to_owned())
+        });
+        match reading {
+            Ok(measured) => {
                 let next = smooth_factor(
                     smoothed,
                     measured,
@@ -82,6 +96,7 @@ fn run(mut config: Config, config_rx: Receiver<Config>, factor_tx: Sender<Result
                 last_error = None;
             }
             Err(error) => {
+                smoothed = None;
                 if last_error.as_deref() != Some(error.as_str()) {
                     tracing::warn!(%error, "sensor de luz ambiente indisponível");
                 }
@@ -109,13 +124,14 @@ fn run(mut config: Config, config_rx: Receiver<Config>, factor_tx: Sender<Result
 
 fn smoothing_source_changed(old: &Config, new: &Config) -> bool {
     old.ambient_enabled != new.ambient_enabled
+        || old.ambient_calibration != new.ambient_calibration
         || old.ambient_camera_index != new.ambient_camera_index
         || old.ambient_brightness_min != new.ambient_brightness_min
         || old.ambient_brightness_max != new.ambient_brightness_max
         || old.preserve_colors() != new.preserve_colors()
 }
 
-fn sample_luminance_in_helper(camera_index: usize) -> Result<f32, String> {
+pub fn sample_luminance_in_helper(camera_index: usize) -> Result<AmbientSample, String> {
     let executable = std::env::current_exe()
         .map_err(|error| format!("não foi possível localizar o Estel ({error})"))?;
     let mut child = Command::new(executable)
@@ -141,11 +157,16 @@ fn sample_luminance_in_helper(camera_index: usize) -> Result<f32, String> {
             }
             let output = String::from_utf8(output.stdout)
                 .map_err(|_| "o Windows retornou uma leitura de câmera inválida".to_owned())?;
-            return output
-                .trim()
-                .parse::<f32>()
-                .map(|value| value.clamp(0.0, 1.0))
-                .map_err(|_| "a câmera retornou uma medida de luz inválida".to_owned());
+            let sample: AmbientSample = serde_json::from_str(output.trim())
+                .map_err(|_| "a câmera retornou uma medida de luz inválida".to_owned())?;
+            if sample.device_id.is_empty()
+                || sample.device_id.len() > 4096
+                || !sample.luminance.is_finite()
+                || !(0.02..=0.98).contains(&sample.luminance)
+            {
+                return Err("A câmera retornou uma leitura inválida ou saturada.".into());
+            }
+            return Ok(sample);
         }
         if Instant::now() >= deadline {
             let _ = child.kill();
@@ -159,14 +180,24 @@ fn sample_luminance_in_helper(camera_index: usize) -> Result<f32, String> {
 }
 
 fn helper_error(stderr: &[u8]) -> String {
-    if String::from_utf8_lossy(stderr).contains("0xC00D3704") {
+    let message = String::from_utf8_lossy(stderr);
+    if message.contains("oscilou") {
+        "A leitura oscilou. Mantenha o enquadramento e a iluminação estáveis e tente novamente."
+            .into()
+    } else if message.contains("saturação") {
+        "A câmera não forneceu quadros válidos sem saturação. Tente novamente com luz difusa."
+            .into()
+    } else if message.contains("em andamento") {
+        "Já há uma leitura em andamento. Aguarde alguns segundos e tente novamente.".into()
+    } else if message.contains("0xC00D3704") {
         "A câmera não iniciou e pode estar em uso por outro aplicativo. Feche o aplicativo que a utiliza ou deixe o brilho pela câmera desligado.".to_owned()
     } else {
         "A câmera não iniciou. Confira as permissões no Windows ou escolha outra câmera.".to_owned()
     }
 }
 
-pub fn sample_luminance(camera_index: usize) -> Result<f32, String> {
+pub fn sample_luminance(camera_index: usize) -> Result<AmbientSample, String> {
+    let _capture = CameraCapture::acquire()?;
     let _session = MediaFoundationSession::start()?;
     let devices = video_devices()?;
     let device = devices
@@ -196,8 +227,10 @@ pub fn sample_luminance(camera_index: usize) -> Result<f32, String> {
             )
             .map_err(|error| error.to_string())?;
     }
-    let mut sample = None;
-    for _ in 0..8 {
+    let started = Instant::now();
+    let mut readings = Vec::with_capacity(5);
+    for _ in 0..90 {
+        let mut sample = None;
         let mut stream_flags = 0u32;
         unsafe {
             reader
@@ -211,33 +244,88 @@ pub fn sample_luminance(camera_index: usize) -> Result<f32, String> {
                 )
                 .map_err(|error| error.to_string())?;
         }
-        if sample.is_some() {
+        if started.elapsed() < Duration::from_millis(500) {
+            continue;
+        }
+        let Some(sample) = sample else {
+            continue;
+        };
+        let buffer = unsafe {
+            sample
+                .ConvertToContiguousBuffer()
+                .map_err(|error| error.to_string())?
+        };
+        let mut data = std::ptr::null_mut();
+        let mut max_length = 0;
+        let mut length = 0;
+        unsafe {
+            buffer
+                .Lock(&mut data, Some(&mut max_length), Some(&mut length))
+                .map_err(|error| error.to_string())?;
+        }
+        let luminance = if length == 0 || data.is_null() {
+            None
+        } else {
+            unsafe { yuy2_luminance(std::slice::from_raw_parts(data, length as usize)) }
+        };
+        unsafe { buffer.Unlock() }.map_err(|error| error.to_string())?;
+        readings.push(luminance.ok_or_else(|| "quadro de câmera vazio".to_owned())?);
+        if readings.len() == 5 {
             break;
         }
     }
-    let sample = sample.ok_or_else(|| "a câmera não entregou um quadro".to_owned())?;
-    let buffer = unsafe {
-        sample
-            .ConvertToContiguousBuffer()
-            .map_err(|error| error.to_string())?
-    };
-    let mut data = std::ptr::null_mut();
-    let mut max_length = 0;
-    let mut length = 0;
-    unsafe {
-        buffer
-            .Lock(&mut data, Some(&mut max_length), Some(&mut length))
+    let luminance = stable_luminance(&readings)?;
+    Ok(AmbientSample {
+        device_id: camera_attribute(
+            device,
+            &MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_SYMBOLIC_LINK,
+        )?,
+        luminance,
+    })
+}
+
+struct CameraCapture(HANDLE);
+
+impl CameraCapture {
+    fn acquire() -> Result<Self, String> {
+        let handle = unsafe { CreateMutexW(None, false, w!("Local\\EstelAmbientCapture")) }
             .map_err(|error| error.to_string())?;
+        let result = unsafe { WaitForSingleObject(handle, 1000) };
+        if result != WAIT_OBJECT_0 && result != WAIT_ABANDONED {
+            unsafe { CloseHandle(handle) }.map_err(|error| error.to_string())?;
+            return Err(
+                "Já há uma leitura em andamento. Aguarde alguns segundos e tente novamente.".into(),
+            );
+        }
+        Ok(Self(handle))
     }
-    let luminance = if length == 0 || data.is_null() {
-        None
-    } else {
-        unsafe { yuy2_luminance(std::slice::from_raw_parts(data, length as usize)) }
-    };
-    unsafe {
-        let _ = buffer.Unlock();
+}
+
+impl Drop for CameraCapture {
+    fn drop(&mut self) {
+        if let Err(error) = unsafe { ReleaseMutex(self.0) } {
+            tracing::warn!(%error, "camera capture release failed");
+        }
+        if let Err(error) = unsafe { CloseHandle(self.0) } {
+            tracing::warn!(%error, "camera capture handle close failed");
+        }
     }
-    luminance.ok_or_else(|| "quadro de câmera vazio".to_owned())
+}
+
+fn stable_luminance(readings: &[f32]) -> Result<f32, String> {
+    if readings.len() != 5
+        || readings
+            .iter()
+            .any(|value| !value.is_finite() || !(0.02..=0.98).contains(value))
+    {
+        return Err("A câmera não forneceu cinco quadros válidos sem saturação. Tente novamente com luz difusa.".into());
+    }
+    let min = readings.iter().copied().fold(1.0_f32, f32::min);
+    let max = readings.iter().copied().fold(0.0_f32, f32::max);
+    if max - min > 0.05 {
+        return Err("A leitura da câmera oscilou. Mantenha o enquadramento e a iluminação estáveis e tente novamente.".into());
+    }
+    Ok(readings.iter().sum::<f32>() / readings.len() as f32)
 }
 
 struct MediaFoundationSession;
@@ -295,15 +383,18 @@ fn video_devices() -> Result<Vec<IMFActivate>, String> {
 }
 
 fn camera_name(device: &IMFActivate) -> Result<String, String> {
+    camera_attribute(device, &MF_DEVSOURCE_ATTRIBUTE_FRIENDLY_NAME)
+}
+
+fn camera_attribute(
+    device: &IMFActivate,
+    attribute: &windows::core::GUID,
+) -> Result<String, String> {
     let mut name = PWSTR::null();
     let mut length = 0;
     unsafe {
         device
-            .GetAllocatedString(
-                &MF_DEVSOURCE_ATTRIBUTE_FRIENDLY_NAME,
-                &mut name,
-                &mut length,
-            )
+            .GetAllocatedString(attribute, &mut name, &mut length)
             .map_err(|error| error.to_string())?;
     }
     let value = unsafe { name.to_string() }.map_err(|error| error.to_string());
@@ -348,27 +439,27 @@ fn yuy2_luminance(data: &[u8]) -> Option<f32> {
     Some((total / count as f32 / 255.0).clamp(0.0, 1.0))
 }
 
-fn factor_for_luminance(luminance: f32, min_factor: f32, max_factor: f32) -> f32 {
-    let normalized = luminance.clamp(0.0, 1.0);
-    let response = normalized.powf(0.55);
-    min_factor + (max_factor - min_factor) * response
-}
-
 fn sample_stride(pixels: usize) -> usize {
     pixels.div_ceil(MAX_PIXEL_SAMPLES).max(1)
 }
 
 fn smooth_factor(previous: Option<f32>, measured: f32, min_factor: f32, max_factor: f32) -> f32 {
     previous
-        .map_or(measured, |value| value + (measured - value) * SMOOTHING)
+        .map_or(measured, |value| {
+            if (measured - value).abs() < 0.02 {
+                value
+            } else {
+                value + (measured - value) * SMOOTHING
+            }
+        })
         .clamp(min_factor, max_factor)
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        MAX_PIXEL_SAMPLES, factor_for_luminance, frame_luminance, helper_error, sample_stride,
-        smooth_factor, smoothing_source_changed, yuy2_luminance,
+        MAX_PIXEL_SAMPLES, frame_luminance, helper_error, sample_stride, smooth_factor,
+        smoothing_source_changed, stable_luminance, yuy2_luminance,
     };
     use crate::config::Config;
 
@@ -392,30 +483,16 @@ mod tests {
     }
 
     #[test]
-    fn maps_dark_and_very_bright_rooms_continuously() {
-        assert!((factor_for_luminance(0.0, 0.65, 1.25) - 0.65).abs() < f32::EPSILON);
-        assert!((factor_for_luminance(1.0, 0.65, 1.25) - 1.25).abs() < f32::EPSILON);
-        assert!(factor_for_luminance(0.25, 0.65, 1.25) < factor_for_luminance(0.50, 0.65, 1.25));
-        assert!(factor_for_luminance(0.50, 0.65, 1.25) < factor_for_luminance(0.75, 0.65, 1.25));
+    fn rejects_unstable_saturated_and_nonfinite_camera_readings() {
+        for readings in [[0.2, 0.2, 0.4, 0.2, 0.2], [1.0; 5], [f32::NAN; 5]] {
+            assert!(stable_luminance(&readings).is_err());
+        }
+        assert!((stable_luminance(&[0.3, 0.31, 0.3, 0.32, 0.3]).unwrap() - 0.306).abs() < 0.001);
     }
 
     #[test]
-    fn brightness_factor_stays_within_configured_limits() {
-        let config = Config::default();
-        assert!(
-            factor_for_luminance(
-                0.0,
-                config.ambient_brightness_min,
-                config.ambient_brightness_max,
-            ) >= config.ambient_brightness_min
-        );
-        assert!(
-            factor_for_luminance(
-                1.0,
-                config.ambient_brightness_min,
-                config.ambient_brightness_max,
-            ) <= config.ambient_brightness_max
-        );
+    fn tiny_camera_fluctuations_do_not_move_brightness() {
+        assert_eq!(smooth_factor(Some(0.5), 0.51, 0.25, 0.85), 0.5);
     }
 
     #[test]
@@ -430,7 +507,7 @@ mod tests {
 
     #[test]
     fn first_camera_reading_respects_configured_limit() {
-        let measured = factor_for_luminance(0.0, 0.35, 0.35);
+        let measured = 0.35;
         assert!(smooth_factor(None, measured, 0.35, 0.35) <= 0.35);
     }
 
