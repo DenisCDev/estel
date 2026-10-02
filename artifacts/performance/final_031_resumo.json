@@ -1,0 +1,311 @@
+[
+  {
+    "scenario": "final_031_bandeja",
+    "source": "final_031_bandeja_20261002T174112097Z_11496.json",
+    "duration_seconds": 58.725,
+    "observer_cpu_seconds": 6.14062,
+    "warnings": [
+      "Uma consulta de GPU falhou ou excedeu o prazo; a amostra n\u00e3o cont\u00e9m esses valores. Tr\u00eas falhas consecutivas suspendem consultas de GPU.",
+      "A consulta de contadores p\u00fablicos do DWM falhou ou excedeu o prazo."
+    ],
+    "processes": [
+      {
+        "process_id": 11496,
+        "kind": "principal",
+        "samples": 27,
+        "cpu_percent_machine": 0.00715,
+        "working_set_mean_mib": 29.77,
+        "private_bytes_mean_mib": 3.676,
+        "gpu_engines": {}
+      },
+      {
+        "process_id": 30928,
+        "kind": "hardware_worker",
+        "samples": 27,
+        "cpu_percent_machine": 0.00239,
+        "working_set_mean_mib": 26.239,
+        "private_bytes_mean_mib": 3.078,
+        "gpu_engines": {}
+      },
+      {
+        "process_id": 1772,
+        "kind": "dwm",
+        "samples": 26,
+        "cpu_percent_machine": 6.88141,
+        "working_set_mean_mib": 63.153,
+        "private_bytes_mean_mib": 240.516,
+        "gpu_engines": {
+          "Timer 0": {
+            "mean": 0.0,
+            "max": 0.0,
+            "samples": 25
+          },
+          "Video JPEG 0": {
+            "mean": 0.0,
+            "max": 0.0,
+            "samples": 25
+          },
+          "Video Codec Engine": {
+            "mean": 0.0,
+            "max": 0.0,
+            "samples": 25
+          },
+          "Security 1": {
+            "mean": 0.0,
+            "max": 0.0,
+            "samples": 25
+          },
+          "3D": {
+            "mean": 9.92,
+            "max": 10.0,
+            "samples": 25
+          },
+          "Copy": {
+            "mean": 0.0,
+            "max": 0.0,
+            "samples": 25
+          },
+          "Compute 0": {
+            "mean": 0.0,
+            "max": 0.0,
+            "samples": 25
+          }
+        }
+      }
+    ]
+  },
+  {
+    "scenario": "final_031_painel",
+    "source": "final_031_painel_20261002T174251535Z_11496.json",
+    "duration_seconds": 58.267,
+    "observer_cpu_seconds": 7.625,
+    "warnings": [],
+    "processes": [
+      {
+        "process_id": 11496,
+        "kind": "principal",
+        "samples": 29,
+        "cpu_percent_machine": 0.00231,
+        "working_set_mean_mib": 29.683,
+        "private_bytes_mean_mib": 3.505,
+        "gpu_engines": {}
+      },
+      {
+        "process_id": 30928,
+        "kind": "hardware_worker",
+        "samples": 29,
+        "cpu_percent_machine": 0.00463,
+        "working_set_mean_mib": 26.217,
+        "private_bytes_mean_mib": 3.002,
+        "gpu_engines": {}
+      },
+      {
+        "process_id": 36380,
+        "kind": "settings",
+        "samples": 29,
+        "cpu_percent_machine": 0.29631,
+        "working_set_mean_mib": 122.368,
+        "private_bytes_mean_mib": 150.107,
+        "gpu_engines": {
+          "3D": {
+            "mean": 0.0,
+            "max": 0.0,
+            "samples": 29
+          },
+          "Copy": {
+            "mean": 0.0,
+            "max": 0.0,
+            "samples": 29
+          },
+          "Video Codec Engine": {
+            "mean": 0.0,
+            "max": 0.0,
+            "samples": 29
+          },
+          "Video JPEG 0": {
+            "mean": 0.0,
+            "max": 0.0,
+            "samples": 29
+          },
+          "Timer 0": {
+            "mean": 0.0,
+            "max": 0.0,
+            "samples": 29
+          },
+          "Compute 0": {
+            "mean": 0.0,
+            "max": 0.0,
+            "samples": 29
+          },
+          "Security 1": {
+            "mean": 0.0,
+            "max": 0.0,
+            "samples": 29
+          }
+        }
+      },
+      {
+        "process_id": 1772,
+        "kind": "dwm",
+        "samples": 29,
+        "cpu_percent_machine": 7.55747,
+        "working_set_mean_mib": 63.511,
+        "private_bytes_mean_mib": 240.762,
+        "gpu_engines": {
+          "3D": {
+            "mean": 8.37931,
+            "max": 10.0,
+            "samples": 29
+          },
+          "Copy": {
+            "mean": 0.0,
+            "max": 0.0,
+            "samples": 29
+          },
+          "Video Codec Engine": {
+            "mean": 0.0,
+            "max": 0.0,
+            "samples": 29
+          },
+          "Video JPEG 0": {
+            "mean": 0.0,
+            "max": 0.0,
+            "samples": 29
+          },
+          "Timer 0": {
+            "mean": 0.0,
+            "max": 0.0,
+            "samples": 29
+          },
+          "Compute 0": {
+            "mean": 0.0,
+            "max": 0.0,
+            "samples": 29
+          },
+          "Security 1": {
+            "mean": 0.0,
+            "max": 0.0,
+            "samples": 29
+          }
+        }
+      }
+    ]
+  },
+  {
+    "scenario": "final_031_painel_idle_confirm",
+    "source": "final_031_painel_idle_confirm_20261002T174531287Z_11496.json",
+    "duration_seconds": 28.194,
+    "observer_cpu_seconds": 5.125,
+    "warnings": [],
+    "processes": [
+      {
+        "process_id": 11496,
+        "kind": "principal",
+        "samples": 14,
+        "cpu_percent_machine": 0.0,
+        "working_set_mean_mib": 29.693,
+        "private_bytes_mean_mib": 3.497,
+        "gpu_engines": {}
+      },
+      {
+        "process_id": 30928,
+        "kind": "hardware_worker",
+        "samples": 14,
+        "cpu_percent_machine": 0.0,
+        "working_set_mean_mib": 26.191,
+        "private_bytes_mean_mib": 2.965,
+        "gpu_engines": {}
+      },
+      {
+        "process_id": 36380,
+        "kind": "settings",
+        "samples": 14,
+        "cpu_percent_machine": 0.16385,
+        "working_set_mean_mib": 123.237,
+        "private_bytes_mean_mib": 150.035,
+        "gpu_engines": {
+          "Video Codec Engine": {
+            "mean": 0.0,
+            "max": 0.0,
+            "samples": 14
+          },
+          "Compute 0": {
+            "mean": 0.0,
+            "max": 0.0,
+            "samples": 14
+          },
+          "Video JPEG 0": {
+            "mean": 0.0,
+            "max": 0.0,
+            "samples": 14
+          },
+          "Security 1": {
+            "mean": 0.0,
+            "max": 0.0,
+            "samples": 14
+          },
+          "3D": {
+            "mean": 0.0,
+            "max": 0.0,
+            "samples": 14
+          },
+          "Timer 0": {
+            "mean": 0.0,
+            "max": 0.0,
+            "samples": 14
+          },
+          "Copy": {
+            "mean": 0.0,
+            "max": 0.0,
+            "samples": 14
+          }
+        }
+      },
+      {
+        "process_id": 1772,
+        "kind": "dwm",
+        "samples": 14,
+        "cpu_percent_machine": 8.00595,
+        "working_set_mean_mib": 63.739,
+        "private_bytes_mean_mib": 240.919,
+        "gpu_engines": {
+          "Video Codec Engine": {
+            "mean": 0.0,
+            "max": 0.0,
+            "samples": 14
+          },
+          "Compute 0": {
+            "mean": 0.0,
+            "max": 0.0,
+            "samples": 14
+          },
+          "Video JPEG 0": {
+            "mean": 0.0,
+            "max": 0.0,
+            "samples": 14
+          },
+          "Security 1": {
+            "mean": 0.0,
+            "max": 0.0,
+            "samples": 14
+          },
+          "3D": {
+            "mean": 9.07143,
+            "max": 10.0,
+            "samples": 14
+          },
+          "Timer 0": {
+            "mean": 0.0,
+            "max": 0.0,
+            "samples": 14
+          },
+          "Copy": {
+            "mean": 0.0,
+            "max": 0.0,
+            "samples": 14
+          }
+        }
+      }
+    ]
+  }
+]

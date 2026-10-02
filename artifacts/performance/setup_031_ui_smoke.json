@@ -1,0 +1,20 @@
+{
+  "tested_utc": "2026-10-02T17:39:07Z",
+  "source_commit": "2b6fad53f6facd3eed78a1eb89ccd01a4a6171c5",
+  "version": "0.3.1",
+  "execution": "debug executable, standalone settings window, isolated APPDATA",
+  "steps_observed": 5,
+  "windows_location_default": false,
+  "camera_enumeration": "one USB webcam identified without starting calibration capture",
+  "light_sensor_probe": "completed with an explicit unavailable-reading message; navigation resumed",
+  "window_direction": "optional direction control and phone compass instructions displayed",
+  "completion": "success message and normal settings panel displayed",
+  "persisted_setup_completed": true,
+  "reopen": "normal settings panel opened; guided configuration remained accessible",
+  "real_config_sha256_before_and_after": "F19AB77112B41457ED00BC26E5BE467B79C2F4830D581BA4DD30F07FC86A69C6",
+  "limits": [
+    "No physical two-light calibration was performed.",
+    "The isolated UI had no main host; monitor status correctly reported waiting for that host.",
+    "The attempted window resize did not change its dimensions; reduced-size behavior was not verified visually."
+  ]
+}

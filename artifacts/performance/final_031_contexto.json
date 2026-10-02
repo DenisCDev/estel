@@ -1,0 +1,37 @@
+{
+  "binary_version": "0.3.1",
+  "source_commit": "2b6fad53f6facd3eed78a1eb89ccd01a4a6171c5",
+  "ci_run": 37040813057,
+  "binary_sha256": "C0C49CDEA9F5D06157EEAE7D3F2F8E043F3B4707B7E1F8853E35D4E0F5F6FB96",
+  "execution": "CI release executable, normal desktop host with the existing user configuration",
+  "logical_processors": 12,
+  "displays": "two external SDR displays; DDC/CI and gamma adjustments confirmed by the host",
+  "flags": {
+    "weather_enabled": false,
+    "tick_seconds": 30,
+    "display_enabled": true,
+    "noise_enabled": false,
+    "ambient_enabled": true,
+    "ambient_sample_interval_seconds": 10,
+    "color_critical_work": false,
+    "color_vision_deficiency": false
+  },
+  "camera_state": "uncalibrated; no periodic camera capture; separate single-capture test succeeded",
+  "configuration_migration": "existing values preserved; only setup_completed=true and ambient_prefer_light_sensor=true were added",
+  "config_sha256_before": "F19AB77112B41457ED00BC26E5BE467B79C2F4830D581BA4DD30F07FC86A69C6",
+  "config_sha256_after": "9305B2AAFF47A066452A9016147E60EE51F2D879E6745D171F112BC656B7F284",
+  "normal_shutdown": {
+    "completed": true,
+    "gamma_readback_matches_before_exactly": true,
+    "outputs_verified": 2,
+    "dirty_marker_remaining": false,
+    "gamma_snapshot_empty": true,
+    "ddc_snapshot_empty": true,
+    "host_report": "restoration confirmed"
+  },
+  "limits": [
+    "Measurements were observational on a working desktop with other applications, not an isolated energy experiment.",
+    "The worker adds resident memory; shared pages may be counted twice when summing processes.",
+    "No watts, joules, physical HDR/OLED/notebook validation or two-light camera calibration was measured."
+  ]
+}
