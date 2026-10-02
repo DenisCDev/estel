@@ -72,9 +72,12 @@ pub fn publish_status(config: &Config, phase: WeatherPhase) {
     let path = Config::config_path().with_file_name("weather-status.json");
     if let Err(error) = serde_json::to_vec(&status)
         .map_err(std::io::Error::other)
-        .and_then(|data| std::fs::write(path, data))
+        .and_then(|data| crate::config::atomic_write(&path, &data))
     {
         tracing::warn!(%error, "não foi possível publicar o estado do clima");
+    } else {
+        #[cfg(windows)]
+        crate::status::notify();
     }
 }
 
@@ -100,7 +103,7 @@ pub fn status_label(config: &Config) -> String {
         {
             match status.phase {
                 WeatherPhase::Consulting => "Consultando o clima...".into(),
-                WeatherPhase::Ready(clouds) => format!("Clima atualizado: {clouds}% de nuvens. A câmera tem prioridade."),
+                WeatherPhase::Ready(clouds) => format!("Clima atualizado: {clouds}% de nuvens. A luz ambiente tem prioridade."),
                 WeatherPhase::Unavailable => "Clima indisponível. Confira a conexão; o brilho segue o horário até a próxima consulta.".into(),
             }
         }

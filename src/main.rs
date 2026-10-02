@@ -1,7 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use std::sync::{
-    Arc, Mutex,
+    Arc,
     atomic::{AtomicBool, AtomicU32, Ordering},
     mpsc,
 };
@@ -20,22 +20,68 @@ use windows::core::w;
 
 use estel::ambient;
 use estel::audio::Audio;
-use estel::brightness;
 use estel::config::Config;
-use estel::display;
+use estel::hardware_worker::{HardwareClient, HardwareStatus};
 use estel::overlay;
+use estel::runtime::{ActivityMonitor, WakeSignal, wait_for_work};
 use estel::schedule::DayContext;
-use estel::session;
 use estel::target::{NoiseColor, Target};
 use estel::tray::{Autostart, Tray, TrayAction};
 use estel::update;
 use estel::weather::{self, Weather, WeatherPhase};
 
-static SCREEN_LOCK: Mutex<()> = Mutex::new(());
 const SETTINGS_STARTING: u32 = 1;
 
 fn main() -> anyhow::Result<()> {
+    let result = run();
+    if let Err(error) = &result {
+        tracing::error!(%error, "Estel não conseguiu iniciar");
+        if !std::env::args_os().any(|arg| {
+            arg == "--list-cameras"
+                || arg == "--list-camera-devices"
+                || arg == "--sample-ambient"
+                || arg == "--diagnostics"
+                || arg == "--display-worker"
+                || arg == "--display-diagnostics"
+                || arg == "--sample-light-sensor"
+                || arg == "--quit"
+        }) {
+            show_error(w!(
+                "O Estel não conseguiu iniciar. Suas configurações foram preservadas. Confira estel.log na pasta de configuração e tente abrir novamente."
+            ));
+        }
+    }
+    result
+}
+
+fn run() -> anyhow::Result<()> {
     init_log();
+    if std::env::args_os().any(|arg| arg == "--display-worker") {
+        return estel::hardware_worker::run_stdio();
+    }
+    if std::env::args_os().any(|arg| arg == "--display-diagnostics") {
+        println!(
+            "{}",
+            serde_json::to_string(&estel::hardware_worker::inspect()?)?
+        );
+        return Ok(());
+    }
+    if std::env::args_os().any(|arg| arg == "--quit") {
+        use windows::Win32::Foundation::CloseHandle;
+        use windows::Win32::System::Threading::{EVENT_MODIFY_STATE, OpenEventW};
+        let event = unsafe { OpenEventW(EVENT_MODIFY_STATE, false, w!("Local\\EstelQuit"))? };
+        let result = unsafe { SetEvent(event) };
+        unsafe { CloseHandle(event)? };
+        result?;
+        return Ok(());
+    }
+    if std::env::args_os().any(|arg| arg == "--sample-light-sensor") {
+        println!(
+            "{}",
+            serde_json::to_string(&ambient::sample_light_sensor().map_err(anyhow::Error::msg)?)?
+        );
+        return Ok(());
+    }
     let open_settings_on_start = std::env::args_os().any(|arg| arg == "--settings");
     if let Some(camera_index) = std::env::args()
         .skip_while(|arg| arg != "--sample-ambient")
@@ -50,20 +96,39 @@ fn main() -> anyhow::Result<()> {
                 windows::Win32::System::Com::COINIT_APARTMENTTHREADED,
             );
         }
+        let camera_id = std::env::args()
+            .skip_while(|arg| arg != "--camera-id")
+            .nth(1);
+        if camera_id
+            .as_ref()
+            .is_some_and(|id| id.is_empty() || id.len() > 4096)
+        {
+            anyhow::bail!("identificador de câmera inválido");
+        }
         println!(
             "{}",
             serde_json::to_string(
-                &ambient::sample_luminance(camera_index).map_err(anyhow::Error::msg)?
+                &ambient::sample_luminance(camera_index, camera_id.as_deref())
+                    .map_err(anyhow::Error::msg)?
             )?
         );
         return Ok(());
     }
-    if std::env::args_os().any(|arg| arg == "--list-cameras") {
+    if std::env::args_os().any(|arg| arg == "--list-cameras" || arg == "--list-camera-devices") {
         unsafe {
             let _ = windows::Win32::System::Com::CoInitializeEx(
                 None,
                 windows::Win32::System::Com::COINIT_APARTMENTTHREADED,
             );
+        }
+        if std::env::args_os().any(|arg| arg == "--list-camera-devices") {
+            println!(
+                "{}",
+                serde_json::to_string(
+                    &ambient::list_camera_devices().map_err(anyhow::Error::msg)?
+                )?
+            );
+            return Ok(());
         }
         for camera in ambient::list_cameras().map_err(anyhow::Error::msg)? {
             println!("{camera}");
@@ -72,11 +137,32 @@ fn main() -> anyhow::Result<()> {
     }
     if std::env::args_os().any(|arg| arg == "--settings-window") {
         let (tx, _rx) = mpsc::channel();
-        return estel::ui::run(Config::load_or_default(), tx)
+        return estel::ui::run(Config::load_or_default()?, tx)
             .map_err(|error| anyhow::anyhow!(error.to_string()));
     }
 
-    let (settings_event, config_event, _instance_mutex) = unsafe {
+    if std::env::args_os().any(|arg| arg == "--diagnostics") {
+        unsafe {
+            let _ = windows::Win32::System::Com::CoInitializeEx(
+                None,
+                windows::Win32::System::Com::COINIT_APARTMENTTHREADED,
+            );
+        }
+        println!(
+            "{}",
+            serde_json::to_string(&serde_json::json!({
+                "version": env!("CARGO_PKG_VERSION"),
+                "executable": std::env::current_exe()?,
+                "config_path": Config::config_path(),
+                "config": Config::load_or_default()?,
+                "autostart_enabled": Autostart::new()?.is_enabled(),
+                "cameras": ambient::list_cameras().map_err(anyhow::Error::msg)?,
+            }))?
+        );
+        return Ok(());
+    }
+
+    let (settings_event, config_event, quit_event, _instance_mutex) = unsafe {
         let event = CreateEventW(None, false, false, w!("Local\\EstelOpenSettings"))?;
         let config_event = CreateEventW(None, false, false, w!("Local\\EstelConfigChanged"))?;
         let instance_mutex = CreateMutexW(None, false, w!("Local\\EstelSingleInstance"))?;
@@ -85,13 +171,20 @@ fn main() -> anyhow::Result<()> {
             tracing::info!("Estel já está em execução");
             return Ok(());
         }
-        (event, config_event, instance_mutex)
+        let quit_event = CreateEventW(None, false, false, w!("Local\\EstelQuit"))?;
+        (event, config_event, quit_event, instance_mutex)
     };
 
-    let mut cfg = Config::load_or_default();
+    let wake = WakeSignal::new()?;
+    let mut activity = ActivityMonitor::new()?;
+
+    let mut cfg = Config::load_or_default()?;
     tracing::info!(
         config = %Config::config_path().display(),
         tick_s = cfg.tick_seconds,
+        version = env!("CARGO_PKG_VERSION"),
+        pid = std::process::id(),
+        executable = %std::env::current_exe()?.display(),
         "Estel iniciando",
     );
 
@@ -103,6 +196,24 @@ fn main() -> anyhow::Result<()> {
         }
     };
 
+    if let Some(autostart) = &autostart {
+        match autostart.synchronize(cfg.start_with_windows) {
+            Ok(enabled) => {
+                if cfg.start_with_windows != Some(enabled) {
+                    let previous = cfg.clone();
+                    cfg.start_with_windows = Some(enabled);
+                    cfg = cfg.save_changes(&previous, &Config::config_path())?;
+                }
+                tracing::info!(
+                    enabled,
+                    startup = std::env::args_os().any(|arg| arg == "--startup"),
+                    "início automático verificado"
+                );
+            }
+            Err(error) => tracing::error!(%error, "não foi possível reparar o início automático"),
+        }
+    }
+
     let tray = Tray::new(
         autostart.as_ref().is_some_and(|a| a.is_enabled()),
         cfg.intensity,
@@ -110,8 +221,10 @@ fn main() -> anyhow::Result<()> {
         cfg.ambient_enabled,
     )?;
     let (update_tx, update_rx) = mpsc::channel();
+    let update_wake = wake.clone();
     std::thread::spawn(move || {
         let _ = update_tx.send(update::check_latest());
+        update_wake.notify();
     });
     tray.set_weather_status(if cfg.weather_enabled && !cfg.preserve_colors() {
         "Clima: consultando..."
@@ -126,44 +239,50 @@ fn main() -> anyhow::Result<()> {
     }
     let overlay_hwnd = overlay::create()?;
 
-    let mut screen_initialized = false;
-    if session::is_dirty() || (cfg.display_enabled && !cfg.preserve_colors()) {
-        let _ = display::init();
-        let _ = brightness::init();
-        screen_initialized = true;
-        if cfg.display_enabled && !cfg.preserve_colors() {
-            session::mark_dirty();
-        } else {
-            park_screen();
-        }
-    }
+    let mut hardware = HardwareClient::start(wake.clone())?;
+    let mut display_control = DisplayControl::new();
+    drive_hardware(
+        &mut display_control,
+        &mut hardware,
+        false,
+        &Target::neutral(),
+        &cfg,
+        Instant::now(),
+    );
 
     let running = Arc::new(AtomicBool::new(true));
     let panic_running = running.clone();
+    let panic_wake = wake.clone();
     let orig_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         tracing::error!(panic = %info, "falha interna no Estel");
         panic_running.store(false, Ordering::SeqCst);
-        if let Ok(_screen_guard) = SCREEN_LOCK.try_lock() {
-            restore_screen_unlocked();
-        }
+        panic_wake.notify();
         orig_hook(info);
     }));
 
     let mut audio: Option<Audio> = None;
 
     let (cfg_tx, cfg_rx) = mpsc::channel::<Config>();
-    let (ambient_cfg_tx, ambient_factor_rx) = ambient::start(cfg.clone());
-    let (weather_cfg_tx, weather_rx) = start_weather(cfg.clone());
+    let (ambient_cfg_tx, ambient_factor_rx) = ambient::start(cfg.clone(), wake.clone());
+    ambient_cfg_tx.send(ambient::AmbientCommand::Suspended(!activity.available()))?;
+    let (weather_cfg_tx, weather_rx) = start_weather(cfg.clone(), wake.clone());
     let settings_open = Arc::new(AtomicU32::new(0));
     if open_settings_on_start {
-        open_settings(cfg.clone(), cfg_tx.clone(), settings_open.clone());
+        open_settings(
+            cfg.clone(),
+            cfg_tx.clone(),
+            settings_open.clone(),
+            wake.clone(),
+        );
     }
 
     {
         let running = running.clone();
+        let wake = wake.clone();
         ctrlc::set_handler(move || {
             running.store(false, Ordering::SeqCst);
+            wake.notify();
         })?;
     }
 
@@ -174,11 +293,26 @@ fn main() -> anyhow::Result<()> {
     let mut ambient_last_ok: Option<Instant> = None;
     let mut ambient_failed = false;
     let mut current_weather: Option<Weather> = None;
-    let mut effects_active = false;
+    let mut screen_available = activity.available();
+    let mut ambient_source = None;
     let mut last_display_brightness: Option<(f32, Instant)> = None;
     let mut last_display_cct: Option<(f32, Instant)> = None;
 
     while running.load(Ordering::SeqCst) {
+        while let Some(result) = hardware.poll() {
+            handle_hardware_result(
+                result,
+                overlay_hwnd,
+                &mut display_control,
+                display_requested(
+                    &cfg,
+                    screen_available,
+                    paused,
+                    preview_until,
+                    Instant::now(),
+                ),
+            );
+        }
         if let Ok(Ok(Some(release))) = update_rx.try_recv() {
             tray.set_update_available(&release.version);
         }
@@ -235,11 +369,12 @@ fn main() -> anyhow::Result<()> {
             }
         }
         while let Ok(reading) = ambient_factor_rx.try_recv() {
-            if cfg.preserve_colors() {
+            if cfg.preserve_colors() || !screen_available {
                 continue;
             }
+            ambient_source = reading.as_ref().ok().map(|reading| reading.source);
             apply_ambient_reading(
-                reading,
+                reading.map(|reading| reading.brightness),
                 &mut ambient_brightness,
                 &mut ambient_failed,
                 &mut ambient_last_ok,
@@ -248,10 +383,16 @@ fn main() -> anyhow::Result<()> {
 
         if cfg.preserve_colors() {
             tray.set_ambient_status("Luz ambiente: pausada para preservar cores");
-        } else if cfg.ambient_enabled && !cfg.camera_is_calibrated() {
+        } else if cfg.ambient_enabled && ambient_source == Some(ambient::AmbientSource::LightSensor)
+        {
+            tray.set_ambient_status("Luz ambiente: sensor do Windows ativo");
+        } else if cfg.ambient_enabled
+            && !cfg.camera_is_calibrated()
+            && !cfg.ambient_prefer_light_sensor
+        {
             tray.set_ambient_status("Luz ambiente: calibre a câmera no painel");
         } else if cfg.ambient_enabled && ambient_last_ok.is_none() && !ambient_failed {
-            tray.set_ambient_status("Luz ambiente: aguardando câmera");
+            tray.set_ambient_status("Luz ambiente: buscando uma leitura válida");
         } else {
             update_ambient_status(
                 &tray,
@@ -336,7 +477,7 @@ fn main() -> anyhow::Result<()> {
             ));
         }
 
-        tracing::info!(
+        tracing::debug!(
             cct = target.cct_kelvin as u32,
             brilho_pct = (target.brightness * 100.0) as u32,
             ruido = ?target.noise,
@@ -344,68 +485,24 @@ fn main() -> anyhow::Result<()> {
             "tick"
         );
 
-        if cfg.preserve_colors() || !cfg.display_enabled {
-            retry_park(&mut effects_active, session::is_dirty(), park_screen);
+        let display_enabled = display_requested(
+            &cfg,
+            screen_available,
+            paused,
+            preview_until,
+            Instant::now(),
+        );
+        if !display_enabled {
             overlay::hide(overlay_hwnd);
-        } else if paused && !preview {
-            retry_park(&mut effects_active, session::is_dirty(), park_screen);
-        } else {
-            let _screen_guard = SCREEN_LOCK
-                .lock()
-                .unwrap_or_else(|error| error.into_inner());
-            if !running.load(Ordering::SeqCst) {
-                break;
-            }
-            if !screen_initialized {
-                let _ = display::init();
-                let _ = brightness::init();
-                screen_initialized = true;
-            }
-            if !effects_active {
-                session::mark_dirty();
-            }
-            let display_started = Instant::now();
-            let gamma_active =
-                match display::apply(&target, cfg.gamma_warm_floor_k, cfg.min_brightness) {
-                    Ok(true) => {
-                        tracing::debug!(cct = target.cct_kelvin as u32, "gamma ok");
-                        true
-                    }
-                    Ok(false) => {
-                        tracing::debug!(
-                            cct = target.cct_kelvin as u32,
-                            "gamma recusada ou ausente"
-                        );
-                        false
-                    }
-                    Err(e) => {
-                        tracing::error!("display::apply: {e}");
-                        false
-                    }
-                };
-            if display_started.elapsed() > Duration::from_millis(250) {
-                tracing::warn!(
-                    elapsed_ms = display_started.elapsed().as_millis(),
-                    "ajuste de cor demorou"
-                );
-            }
-            let brightness_started = Instant::now();
-            let ddc_active = brightness::apply(target.brightness);
-            overlay::update(
-                overlay_hwnd,
-                target.cct_kelvin,
-                target.brightness,
-                ddc_active,
-                gamma_active,
-            );
-            effects_active = true;
-            if brightness_started.elapsed() > Duration::from_millis(250) {
-                tracing::warn!(
-                    elapsed_ms = brightness_started.elapsed().as_millis(),
-                    "ajuste de brilho demorou"
-                );
-            }
         }
+        drive_hardware(
+            &mut display_control,
+            &mut hardware,
+            display_enabled,
+            &target,
+            &cfg,
+            Instant::now(),
+        );
 
         let wants_audio = requested_audio_target(&target, &cfg, paused, preview).is_some();
         if wants_audio && audio.is_none() {
@@ -429,15 +526,64 @@ fn main() -> anyhow::Result<()> {
         tick_audio(&mut audio, &target, &cfg, paused, preview);
 
         let tick = Duration::from_secs(cfg.tick_seconds.max(5));
-        let step = Duration::from_millis(50);
-        let mut elapsed = Duration::ZERO;
+        let deadline = preview_until.map_or(Instant::now() + tick, |preview_end| {
+            preview_end.min(Instant::now() + tick)
+        });
         let mut kick = false;
 
-        while elapsed < tick && running.load(Ordering::SeqCst) && !kick {
+        while Instant::now() < deadline && running.load(Ordering::SeqCst) && !kick {
             overlay::pump_messages();
 
+            if activity.closing() {
+                running.store(false, Ordering::SeqCst);
+                break;
+            }
+            let available = activity.available();
+            if available != screen_available {
+                screen_available = available;
+                if ambient_cfg_tx
+                    .send(ambient::AmbientCommand::Suspended(!available))
+                    .is_err()
+                {
+                    tracing::error!("não foi possível atualizar a pausa do sensor de luz");
+                }
+                if !available {
+                    ambient_brightness = None;
+                    ambient_last_ok = None;
+                    ambient_source = None;
+                    overlay::hide(overlay_hwnd);
+                    display_control.set_requested(false, Instant::now());
+                } else {
+                    display_control.restart(Instant::now());
+                }
+                kick = true;
+            }
+            if activity.take_refresh() {
+                display_control.restart(Instant::now());
+                kick = true;
+            }
+            while let Some(result) = hardware.poll() {
+                handle_hardware_result(
+                    result,
+                    overlay_hwnd,
+                    &mut display_control,
+                    display_requested(
+                        &cfg,
+                        screen_available,
+                        paused,
+                        preview_until,
+                        Instant::now(),
+                    ),
+                );
+            }
+
             if unsafe { WaitForSingleObject(settings_event, 0) } == WAIT_OBJECT_0 {
-                open_settings(cfg.clone(), cfg_tx.clone(), settings_open.clone());
+                open_settings(
+                    cfg.clone(),
+                    cfg_tx.clone(),
+                    settings_open.clone(),
+                    wake.clone(),
+                );
             }
 
             if let Some(action) = tray.poll() {
@@ -450,13 +596,15 @@ fn main() -> anyhow::Result<()> {
                         paused = !paused;
                         tray.set_paused(paused);
                         if paused {
-                            effects_active = !park_screen();
+                            preview_until = None;
+                            display_control.set_requested(false, Instant::now());
                             overlay::hide(overlay_hwnd);
                             if let Some(ref mut aud) = audio {
                                 aud.silence();
                             }
                             tracing::info!("pausada");
                         } else {
+                            display_control.restart(Instant::now());
                             tracing::info!("retomada");
                         }
                         kick = true;
@@ -465,7 +613,14 @@ fn main() -> anyhow::Result<()> {
                         if let Some(ref a) = autostart {
                             match a.toggle() {
                                 Ok(enabled) => {
-                                    tray.set_autostart(enabled);
+                                    let previous = cfg.clone();
+                                    cfg.start_with_windows = Some(enabled);
+                                    if !persist(&mut cfg, &previous, config_event)
+                                        && let Err(error) = a.synchronize(Some(!enabled))
+                                    {
+                                        tracing::error!(%error, "não foi possível restaurar o início automático após falha ao salvar");
+                                    }
+                                    tray.set_autostart(a.is_enabled());
                                     tracing::info!(enabled, "início automático");
                                 }
                                 Err(e) => {
@@ -481,9 +636,10 @@ fn main() -> anyhow::Result<()> {
                         }
                     }
                     TrayAction::ToggleNoise => {
+                        let previous = cfg.clone();
                         cfg.noise_enabled = !cfg.noise_enabled;
+                        persist(&mut cfg, &previous, config_event);
                         tray.set_noise(cfg.noise_enabled);
-                        persist(&cfg);
                         kick = true;
                     }
                     TrayAction::PreviewNight => {
@@ -492,17 +648,28 @@ fn main() -> anyhow::Result<()> {
                         kick = true;
                     }
                     TrayAction::OpenSettings => {
-                        open_settings(cfg.clone(), cfg_tx.clone(), settings_open.clone());
+                        open_settings(
+                            cfg.clone(),
+                            cfg_tx.clone(),
+                            settings_open.clone(),
+                            wake.clone(),
+                        );
                     }
                     TrayAction::CheckUpdates => {
-                        open_settings(cfg.clone(), cfg_tx.clone(), settings_open.clone());
+                        open_settings(
+                            cfg.clone(),
+                            cfg_tx.clone(),
+                            settings_open.clone(),
+                            wake.clone(),
+                        );
                     }
                     TrayAction::SetIntensity(level) => {
+                        let previous = cfg.clone();
                         cfg.intensity = level;
                         last_display_brightness = None;
                         last_display_cct = None;
-                        tray.set_intensity(level);
-                        persist(&cfg);
+                        persist(&mut cfg, &previous, config_event);
+                        tray.set_intensity(cfg.intensity);
                         tracing::info!(level = level.label(), "intensidade");
                         kick = true;
                     }
@@ -567,11 +734,12 @@ fn main() -> anyhow::Result<()> {
             }
 
             while let Ok(reading) = ambient_factor_rx.try_recv() {
-                if cfg.preserve_colors() {
+                if cfg.preserve_colors() || !screen_available {
                     continue;
                 }
+                ambient_source = reading.as_ref().ok().map(|reading| reading.source);
                 apply_ambient_reading(
-                    reading,
+                    reading.map(|reading| reading.brightness),
                     &mut ambient_brightness,
                     &mut ambient_failed,
                     &mut ambient_last_ok,
@@ -581,12 +749,40 @@ fn main() -> anyhow::Result<()> {
 
             tick_audio(&mut audio, &target, &cfg, paused, preview);
 
-            std::thread::sleep(step);
-            elapsed += step;
+            if display_control.followup_ready(Instant::now()) {
+                kick = true;
+            }
+            if kick || !running.load(Ordering::SeqCst) {
+                break;
+            }
+            let wait_until = display_control
+                .retry_at()
+                .map_or(deadline, |retry| retry.min(deadline));
+            let remaining = wait_until.saturating_duration_since(Instant::now());
+            let timeout = if audio.as_ref().is_some_and(Audio::needs_tick) {
+                remaining.min(Duration::from_millis(50))
+            } else {
+                remaining
+            };
+            match wait_for_work(
+                &[wake.handle(), settings_event, config_event, quit_event],
+                timeout,
+            )? {
+                1 => unsafe { SetEvent(settings_event)? },
+                2 => unsafe { SetEvent(config_event)? },
+                3 => {
+                    user_quit = true;
+                    running.store(false, Ordering::SeqCst);
+                }
+                _ => {}
+            }
         }
     }
 
-    if restore_screen() {
+    overlay::hide(overlay_hwnd);
+    let restored = hardware.shutdown();
+    estel::status::publish_stopped(restored);
+    if restored {
         tracing::info!("Estel encerrado — monitor restaurado");
     } else {
         tracing::warn!("Estel encerrado — restauração do monitor pendente");
@@ -599,43 +795,196 @@ fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn park_screen() -> bool {
-    let _screen_guard = SCREEN_LOCK
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
-    let gamma = display::park();
-    let backlight = brightness::park();
-    if gamma && backlight {
-        session::mark_clean();
-        true
-    } else {
-        tracing::warn!("restauração da tela incompleta; mantendo dados para recuperação");
-        false
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DisplayAction {
+    Target,
+    Park,
+    Refresh,
+}
+
+struct DisplayControl {
+    requested: bool,
+    restored: bool,
+    restore_needed: bool,
+    pending: Option<DisplayAction>,
+    park_attempts: u8,
+    retry: Option<Instant>,
+    refresh_needed: bool,
+    target_due: bool,
+}
+
+impl DisplayControl {
+    fn new() -> Self {
+        Self {
+            requested: false,
+            restored: false,
+            restore_needed: true,
+            pending: None,
+            park_attempts: 0,
+            retry: None,
+            refresh_needed: false,
+            target_due: true,
+        }
+    }
+
+    fn set_requested(&mut self, requested: bool, now: Instant) {
+        if self.requested == requested {
+            return;
+        }
+        self.requested = requested;
+        self.park_attempts = u8::from(self.pending == Some(DisplayAction::Park));
+        self.retry = Some(now);
+        self.target_due = true;
+        if !requested {
+            self.restore_needed = !self.restored || self.pending.is_some();
+        }
+    }
+
+    fn restart(&mut self, now: Instant) {
+        self.park_attempts = u8::from(self.pending == Some(DisplayAction::Park));
+        self.retry = Some(now);
+        self.target_due = true;
+        self.refresh_needed = true;
+        if !self.requested {
+            self.restored = false;
+            self.restore_needed = true;
+        }
+    }
+
+    fn next_action(&mut self, requested: bool, now: Instant) -> Option<DisplayAction> {
+        self.set_requested(requested, now);
+        if self.pending.is_some() {
+            self.target_due |= requested;
+            return None;
+        }
+        let action = if self.restore_needed {
+            if self.park_attempts >= 3 || self.retry.is_some_and(|retry| retry > now) {
+                return None;
+            }
+            self.park_attempts += 1;
+            self.retry = None;
+            DisplayAction::Park
+        } else if !self.requested {
+            return None;
+        } else if self.refresh_needed {
+            self.refresh_needed = false;
+            DisplayAction::Refresh
+        } else {
+            self.target_due = false;
+            self.restored = false;
+            DisplayAction::Target
+        };
+        self.pending = Some(action);
+        Some(action)
+    }
+
+    fn observe(&mut self, result: &Result<HardwareStatus, String>, now: Instant) -> bool {
+        let Some(action) = self.pending.take() else {
+            return false;
+        };
+        if action == DisplayAction::Park {
+            self.restored = result
+                .as_ref()
+                .is_ok_and(|status| status.restored && status.applied_target.is_none());
+            self.restore_needed = !self.restored;
+            self.retry = (!self.restored && self.park_attempts < 3)
+                .then(|| now + Duration::from_secs(5 * u64::from(self.park_attempts)));
+            if self.restore_needed && self.park_attempts >= 3 {
+                tracing::warn!(
+                    "restauração não confirmada após três tentativas; aguardando retomada ou reconexão"
+                );
+            }
+            return false;
+        }
+        if result.is_err() {
+            self.restored = false;
+            self.restore_needed = true;
+            self.park_attempts = 0;
+            self.retry = Some(now);
+            return false;
+        }
+        self.requested && !self.restore_needed && !self.refresh_needed
+    }
+
+    fn retry_at(&self) -> Option<Instant> {
+        if self.pending.is_none() && self.restore_needed && self.park_attempts < 3 {
+            self.retry
+        } else {
+            None
+        }
+    }
+
+    fn followup_ready(&self, now: Instant) -> bool {
+        if self.pending.is_some() {
+            return false;
+        }
+        if self.restore_needed {
+            self.park_attempts < 3 && self.retry.is_none_or(|retry| retry <= now)
+        } else {
+            self.requested && (self.target_due || self.refresh_needed)
+        }
     }
 }
 
-fn retry_park(active: &mut bool, dirty: bool, park: impl FnOnce() -> bool) {
-    if *active || dirty {
-        *active = !park();
+fn display_requested(
+    cfg: &Config,
+    screen_available: bool,
+    paused: bool,
+    preview: Option<Instant>,
+    now: Instant,
+) -> bool {
+    screen_available
+        && cfg.display_enabled
+        && !cfg.preserve_colors()
+        && (!paused || preview.is_some_and(|until| now < until))
+}
+
+fn drive_hardware(
+    control: &mut DisplayControl,
+    hardware: &mut HardwareClient,
+    requested: bool,
+    target: &Target,
+    cfg: &Config,
+    now: Instant,
+) {
+    match control.next_action(requested, now) {
+        Some(DisplayAction::Target) => {
+            hardware.set_target(target, cfg.gamma_warm_floor_k, cfg.min_brightness)
+        }
+        Some(DisplayAction::Park) => hardware.park(),
+        Some(DisplayAction::Refresh) => hardware.refresh(),
+        None => {}
     }
 }
 
-fn restore_screen() -> bool {
-    let _screen_guard = SCREEN_LOCK
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
-    restore_screen_unlocked()
-}
-
-fn restore_screen_unlocked() -> bool {
-    let gamma = display::restore();
-    let backlight = brightness::restore();
-    if gamma && backlight {
-        session::mark_clean();
-        true
-    } else {
-        tracing::warn!("restauração da tela incompleta; mantendo dados para recuperação");
-        false
+fn handle_hardware_result(
+    result: Result<HardwareStatus, String>,
+    hwnd: windows::Win32::Foundation::HWND,
+    control: &mut DisplayControl,
+    visible: bool,
+) {
+    let now = Instant::now();
+    control.set_requested(visible, now);
+    let allow_overlay = control.observe(&result, now);
+    match result {
+        Ok(status) => {
+            estel::status::publish_hardware(&status);
+            if allow_overlay && let Some(target) = status.applied_target {
+                overlay::update_outputs(
+                    hwnd,
+                    target.cct_kelvin,
+                    target.brightness,
+                    &status.outputs,
+                );
+            } else {
+                overlay::hide(hwnd);
+            }
+        }
+        Err(error) => {
+            tracing::error!(%error, "ajuste do monitor indisponível");
+            estel::status::publish_error();
+            overlay::hide(hwnd);
+        }
     }
 }
 
@@ -724,7 +1073,12 @@ fn brightness_with_sources(
 fn pending_config(event: HANDLE, rx: &mpsc::Receiver<Config>) -> Option<Config> {
     let mut latest = rx.try_iter().last();
     if unsafe { WaitForSingleObject(event, 0) } == WAIT_OBJECT_0 {
-        latest = Some(Config::load_or_default());
+        match Config::load_or_default() {
+            Ok(config) => latest = Some(config),
+            Err(error) => {
+                tracing::error!(%error, "não foi possível reler a configuração; mantendo preferências em uso")
+            }
+        }
     }
     latest
 }
@@ -733,7 +1087,7 @@ fn apply_config_change(
     incoming: Config,
     cfg: &mut Config,
     tray: &Tray,
-    ambient_cfg_tx: &mpsc::Sender<Config>,
+    ambient_cfg_tx: &mpsc::Sender<ambient::AmbientCommand>,
     weather_cfg_tx: &mpsc::Sender<Config>,
     ambient_brightness: &mut Option<f32>,
     ambient_failed: &mut bool,
@@ -755,7 +1109,11 @@ fn apply_config_change(
             "Luz ambiente: desligada"
         });
     }
-    if camera_worker_changed && ambient_cfg_tx.send(cfg.clone()).is_err() {
+    if camera_worker_changed
+        && ambient_cfg_tx
+            .send(ambient::AmbientCommand::Configure(Box::new(cfg.clone())))
+            .is_err()
+    {
         tracing::error!("sensor de luz ambiente encerrou inesperadamente");
     }
     if weather_changed && weather_cfg_tx.send(cfg.clone()).is_err() {
@@ -773,7 +1131,9 @@ fn brightness_controls_changed(old: &Config, new: &Config) -> bool {
     old.intensity != new.intensity
         || old.display_enabled != new.display_enabled
         || old.ambient_enabled != new.ambient_enabled
+        || old.ambient_prefer_light_sensor != new.ambient_prefer_light_sensor
         || old.ambient_camera_index != new.ambient_camera_index
+        || old.ambient_camera_id != new.ambient_camera_id
         || old.ambient_brightness_min != new.ambient_brightness_min
         || old.ambient_brightness_max != new.ambient_brightness_max
         || old.min_brightness != new.min_brightness
@@ -791,8 +1151,10 @@ fn brightness_controls_changed(old: &Config, new: &Config) -> bool {
 
 fn ambient_source_changed(old: &Config, new: &Config) -> bool {
     old.ambient_enabled != new.ambient_enabled
+        || old.ambient_prefer_light_sensor != new.ambient_prefer_light_sensor
         || old.ambient_calibration != new.ambient_calibration
         || old.ambient_camera_index != new.ambient_camera_index
+        || old.ambient_camera_id != new.ambient_camera_id
         || old.ambient_brightness_min != new.ambient_brightness_min
         || old.ambient_brightness_max != new.ambient_brightness_max
         || old.preserve_colors() != new.preserve_colors()
@@ -812,7 +1174,10 @@ fn weather_source_changed(old: &Config, new: &Config) -> bool {
 
 type WeatherReading = (f64, f64, Result<Weather, String>);
 
-fn start_weather(initial: Config) -> (mpsc::Sender<Config>, mpsc::Receiver<WeatherReading>) {
+fn start_weather(
+    initial: Config,
+    wake: WakeSignal,
+) -> (mpsc::Sender<Config>, mpsc::Receiver<WeatherReading>) {
     let (config_tx, config_rx) = mpsc::channel();
     let (result_tx, result_rx) = mpsc::channel();
     std::thread::Builder::new()
@@ -848,6 +1213,7 @@ fn start_weather(initial: Config) -> (mpsc::Sender<Config>, mpsc::Receiver<Weath
                     {
                         return;
                     }
+                    wake.notify();
                 }
                 let delay = cached
                     .as_ref()
@@ -924,14 +1290,27 @@ fn show_error(message: windows::core::PCWSTR) {
     }
 }
 
-fn persist(cfg: &Config) {
-    match cfg.save(&Config::config_path()) {
-        Ok(()) => tracing::info!("configuração salva"),
-        Err(e) => tracing::error!("não foi possível salvar a configuração: {e}"),
+fn persist(cfg: &mut Config, previous: &Config, config_event: HANDLE) -> bool {
+    match cfg.save_changes(previous, &Config::config_path()) {
+        Ok(_) => {
+            if let Err(error) = unsafe { SetEvent(config_event) } {
+                tracing::error!(%error, "não foi possível avisar os ajustes de tela sobre a configuração salva");
+            }
+            tracing::info!("configuração salva");
+            true
+        }
+        Err(e) => {
+            *cfg = previous.clone();
+            tracing::error!("não foi possível salvar a configuração: {e}");
+            show_error(w!(
+                "Não foi possível salvar. Suas preferências anteriores foram mantidas; confira a pasta de configuração e tente novamente."
+            ));
+            false
+        }
     }
 }
 
-fn open_settings(_cfg: Config, tx: mpsc::Sender<Config>, state: Arc<AtomicU32>) {
+fn open_settings(_cfg: Config, tx: mpsc::Sender<Config>, state: Arc<AtomicU32>, wake: WakeSignal) {
     if let Err(pid) =
         state.compare_exchange(0, SETTINGS_STARTING, Ordering::SeqCst, Ordering::SeqCst)
     {
@@ -963,6 +1342,7 @@ fn open_settings(_cfg: Config, tx: mpsc::Sender<Config>, state: Arc<AtomicU32>) 
             .and_then(|executable| {
                 std::process::Command::new(executable)
                     .arg("--settings-window")
+                    .env("ESTEL_UI_PARENT_PID", std::process::id().to_string())
                     .spawn()
             })
             .and_then(|mut child| {
@@ -974,7 +1354,16 @@ fn open_settings(_cfg: Config, tx: mpsc::Sender<Config>, state: Arc<AtomicU32>) 
             tracing::error!("janela de configurações: {error}");
             show_error(w!("Não foi possível abrir as configurações."));
         }
-        let _ = tx.send(Config::load_or_default());
+        match Config::load_or_default() {
+            Ok(config) => {
+                if tx.send(config).is_ok() {
+                    wake.notify();
+                }
+            }
+            Err(error) => {
+                tracing::error!(%error, "não foi possível reler a configuração após fechar o painel")
+            }
+        }
     });
 }
 
@@ -1003,8 +1392,12 @@ fn init_log() {
                 .with_env_filter(env)
                 .init();
         }
-        Err(_) => {
-            tracing_subscriber::fmt().with_env_filter(env).init();
+        Err(error) => {
+            tracing_subscriber::fmt()
+                .with_writer(std::io::stderr)
+                .with_env_filter(env)
+                .init();
+            tracing::warn!(%error, "não foi possível abrir o arquivo de log");
         }
     }
 }
@@ -1038,10 +1431,11 @@ fn solar_times(lat: f64, lon: f64, date: NaiveDate) -> (f64, f64) {
 #[cfg(test)]
 mod tests {
     use super::{
-        ambient_source_changed, ambient_status_text, ambient_worker_changed, apply_ambient_reading,
-        brightness_controls_changed, brightness_with_ambient, brightness_with_sources,
+        DisplayAction, DisplayControl, ambient_source_changed, ambient_status_text,
+        ambient_worker_changed, apply_ambient_reading, brightness_controls_changed,
+        brightness_with_ambient, brightness_with_sources, display_requested,
         fresh_camera_brightness, limit_brightness_change, limit_color_change,
-        requested_audio_target, retry_park, weather_source_changed,
+        requested_audio_target, weather_source_changed,
     };
     use estel::Config;
     use estel::target::{NoiseColor, Target};
@@ -1091,6 +1485,21 @@ mod tests {
     fn camera_brightness_gently_adjusts_night_schedule() {
         assert!((brightness_with_ambient(0.16, true, Some(1.0)) - 0.454).abs() < 0.0001);
         assert!((brightness_with_ambient(0.16, true, Some(0.35)) - 0.2265).abs() < 0.0001);
+    }
+
+    #[test]
+    fn changing_only_camera_identity_updates_the_worker_and_brightness_source() {
+        let current = Config {
+            ambient_camera_id: Some("camera-a".into()),
+            ..Config::default()
+        };
+        let next = Config {
+            ambient_camera_id: Some("camera-b".into()),
+            ..current.clone()
+        };
+        assert!(ambient_source_changed(&current, &next));
+        assert!(ambient_worker_changed(&current, &next));
+        assert!(brightness_controls_changed(&current, &next));
     }
 
     #[test]
@@ -1239,23 +1648,150 @@ mod tests {
     }
 
     #[test]
-    fn failed_screen_restore_retries_while_dirty() {
-        let mut active = false;
-        let mut attempts = 0;
-        retry_park(&mut active, true, || {
-            attempts += 1;
-            false
-        });
-        assert!(active);
-        retry_park(&mut active, true, || {
-            attempts += 1;
-            true
-        });
-        assert!(!active);
-        retry_park(&mut active, false, || {
-            attempts += 1;
-            false
-        });
-        assert_eq!(attempts, 2);
+    fn failed_screen_restore_retries_three_times_with_bounded_backoff() {
+        let now = Instant::now();
+        let mut control = DisplayControl::new();
+        assert_eq!(control.next_action(false, now), Some(DisplayAction::Park));
+        assert!(!control.observe(&Err("driver indisponível".into()), now));
+        assert!(!control.restored);
+        assert_eq!(control.retry_at(), Some(now + Duration::from_secs(5)));
+        assert_eq!(
+            control.next_action(false, now + Duration::from_secs(4)),
+            None
+        );
+        assert_eq!(
+            control.next_action(false, now + Duration::from_secs(5)),
+            Some(DisplayAction::Park)
+        );
+        assert!(!control.observe(
+            &Ok(hardware_status(false, None)),
+            now + Duration::from_secs(5)
+        ));
+        assert_eq!(control.retry_at(), Some(now + Duration::from_secs(15)));
+        assert_eq!(
+            control.next_action(false, now + Duration::from_secs(14)),
+            None
+        );
+        assert_eq!(
+            control.next_action(false, now + Duration::from_secs(15)),
+            Some(DisplayAction::Park)
+        );
+        control.observe(
+            &Err("driver indisponível".into()),
+            now + Duration::from_secs(15),
+        );
+        assert_eq!(
+            control.next_action(false, now + Duration::from_secs(3600)),
+            None
+        );
+        assert_eq!(control.retry_at(), None);
+        assert!(!control.followup_ready(now + Duration::from_secs(3600)));
+        assert!(!control.restored);
+    }
+
+    fn hardware_status(
+        restored: bool,
+        applied_target: Option<Target>,
+    ) -> estel::hardware_worker::HardwareStatus {
+        estel::hardware_worker::HardwareStatus {
+            outputs: Vec::new(),
+            restored,
+            applied_target,
+            recovery_warning: None,
+        }
+    }
+
+    fn active_display(now: Instant) -> DisplayControl {
+        let mut control = DisplayControl::new();
+        assert_eq!(control.next_action(true, now), Some(DisplayAction::Park));
+        control.observe(&Ok(hardware_status(true, None)), now);
+        assert_eq!(control.next_action(true, now), Some(DisplayAction::Target));
+        assert!(control.observe(&Ok(hardware_status(false, Some(Target::neutral()))), now));
+        control
+    }
+
+    #[test]
+    fn pause_waits_for_target_reply_and_resume_waits_for_confirmed_restoration() {
+        let now = Instant::now();
+        let mut control = active_display(now);
+        assert_eq!(control.next_action(true, now), Some(DisplayAction::Target));
+        assert_eq!(control.next_action(false, now), None);
+        assert!(!control.observe(&Ok(hardware_status(false, Some(Target::neutral()))), now));
+        assert!(!control.restored);
+        assert_eq!(control.next_action(false, now), Some(DisplayAction::Park));
+        assert_eq!(control.next_action(true, now), None);
+        assert!(!control.observe(&Ok(hardware_status(true, None)), now));
+        assert!(control.restored);
+        assert!(control.followup_ready(now));
+        assert_eq!(control.next_action(true, now), Some(DisplayAction::Target));
+    }
+
+    #[test]
+    fn applied_target_is_never_accepted_as_confirmation_of_restoration() {
+        let now = Instant::now();
+        let mut control = DisplayControl::new();
+        assert_eq!(control.next_action(false, now), Some(DisplayAction::Park));
+        assert!(!control.observe(&Ok(hardware_status(true, Some(Target::neutral()))), now));
+        assert!(!control.restored);
+        assert_eq!(control.next_action(false, now), None);
+        assert_eq!(
+            control.next_action(false, now + Duration::from_secs(5)),
+            Some(DisplayAction::Park)
+        );
+    }
+
+    #[test]
+    fn every_display_disable_path_requests_restoration() {
+        let now = Instant::now();
+        for mode in 0..5 {
+            let mut control = active_display(now);
+            let mut config = Config::default();
+            match mode {
+                0 => config.display_enabled = false,
+                1 => config.color_critical_work = true,
+                2 => config.color_vision_deficiency = true,
+                _ => {}
+            }
+            let requested = display_requested(&config, mode != 3, mode == 4, None, now);
+            assert!(!requested);
+            assert_eq!(
+                control.next_action(requested, now),
+                Some(DisplayAction::Park)
+            );
+            assert!(!control.restored);
+            control.observe(&Ok(hardware_status(true, None)), now);
+            assert!(control.restored);
+            assert_eq!(control.next_action(requested, now), None);
+        }
+    }
+
+    #[test]
+    fn reconnect_or_resume_restarts_exhausted_restoration_without_overlapping_requests() {
+        let now = Instant::now();
+        for resume in [false, true] {
+            let mut control = DisplayControl::new();
+            for seconds in [0, 5, 15] {
+                let at = now + Duration::from_secs(seconds);
+                assert_eq!(control.next_action(false, at), Some(DisplayAction::Park));
+                control.observe(&Err("driver indisponível".into()), at);
+            }
+            let at = now + Duration::from_secs(20);
+            if !resume {
+                control.restart(at);
+            }
+            assert_eq!(control.next_action(resume, at), Some(DisplayAction::Park));
+            control.restart(at);
+            assert_eq!(control.next_action(resume, at), None);
+            control.observe(&Ok(hardware_status(true, None)), at);
+            assert!(control.restored);
+            if resume {
+                assert_eq!(control.next_action(true, at), Some(DisplayAction::Refresh));
+                assert_eq!(control.next_action(true, at), None);
+                control.observe(&Ok(hardware_status(true, None)), at);
+                assert_eq!(control.next_action(true, at), Some(DisplayAction::Target));
+            } else {
+                assert_eq!(control.next_action(false, at), None);
+            }
+        }
     }
 }

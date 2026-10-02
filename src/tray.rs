@@ -239,19 +239,40 @@ pub struct Autostart(auto_launch::AutoLaunch);
 impl Autostart {
     pub fn new() -> anyhow::Result<Self> {
         let exe = std::env::current_exe()?;
+        Self::at_path("Estel", &exe)
+    }
+
+    fn at_path(name: &str, exe: &std::path::Path) -> anyhow::Result<Self> {
         let path = exe
             .to_str()
             .ok_or_else(|| anyhow::anyhow!("caminho do executável não é UTF-8"))?;
         Ok(Autostart(auto_launch::AutoLaunch::new(
-            "Estel",
-            path,
+            name,
+            &format!("\"{path}\""),
             auto_launch::WindowsEnableMode::CurrentUser,
-            &[] as &[&str],
+            &["--startup"],
         )))
     }
 
     pub fn is_enabled(&self) -> bool {
-        self.0.is_enabled().unwrap_or(false)
+        self.0.is_enabled().unwrap_or_else(|error| {
+            tracing::error!(%error, "não foi possível consultar o início automático");
+            false
+        })
+    }
+
+    pub fn synchronize(&self, preference: Option<bool>) -> anyhow::Result<bool> {
+        let enabled = preference.unwrap_or(self.0.is_enabled()?);
+        if enabled {
+            // Rewrites stale executable paths after updates without enabling an opted-out startup.
+            self.0.enable()?;
+        } else if self.0.is_enabled()? {
+            self.0.disable()?;
+        }
+        if self.0.is_enabled()? != enabled {
+            anyhow::bail!("o Windows não confirmou o início automático");
+        }
+        Ok(enabled)
     }
 
     pub fn toggle(&self) -> anyhow::Result<bool> {
@@ -283,6 +304,52 @@ fn avatar_icon() -> anyhow::Result<tray_icon::Icon> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn autostart_repairs_a_stale_path_and_preserves_opt_out() {
+        use windows::Win32::System::Registry::{HKEY_CURRENT_USER, RRF_RT_REG_SZ, RegGetValueW};
+        use windows::core::{HSTRING, w};
+        struct Registration(Autostart);
+        impl Drop for Registration {
+            fn drop(&mut self) {
+                self.0
+                    .0
+                    .disable()
+                    .expect("remove test startup registration");
+            }
+        }
+        let name = format!("Estel-test-{}", std::process::id());
+        let path = std::env::temp_dir().join("Estel teste/estel.exe");
+        let registration = Registration(Autostart::at_path(&name, &path).unwrap());
+        assert!(!registration.0.synchronize(None).unwrap());
+        assert!(registration.0.synchronize(Some(true)).unwrap());
+        let renamed =
+            Autostart::at_path(&name, &std::env::temp_dir().join("Estel antigo/estel.exe"))
+                .unwrap();
+        renamed.synchronize(Some(true)).unwrap();
+        registration.0.synchronize(Some(true)).unwrap();
+        let mut data = [0u16; 2048];
+        let mut length = std::mem::size_of_val(&data) as u32;
+        unsafe {
+            RegGetValueW(
+                HKEY_CURRENT_USER,
+                w!("Software\\Microsoft\\Windows\\CurrentVersion\\Run"),
+                &HSTRING::from(&name),
+                RRF_RT_REG_SZ,
+                None,
+                Some(data.as_mut_ptr().cast()),
+                Some(&mut length),
+            )
+        }
+        .ok()
+        .unwrap();
+        let command = String::from_utf16(&data[..length as usize / 2 - 1]).unwrap();
+        assert_eq!(command, format!("\"{}\" --startup", path.display()));
+        assert!(!registration.0.toggle().unwrap());
+        assert!(!registration.0.synchronize(Some(false)).unwrap());
+        assert!(registration.0.toggle().unwrap());
+        assert!(!registration.0.synchronize(Some(false)).unwrap());
+    }
 
     #[test]
     fn left_click_opens_settings_and_right_click_keeps_menu() {

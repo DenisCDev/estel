@@ -1,0 +1,14 @@
+{
+  "sac_policy": 1,
+  "event_count": 10,
+  "event_ids": [
+    3033,
+    3077
+  ],
+  "first_event_utc": "2026-10-02T14:05:09.2812664Z",
+  "last_event_utc": "2026-10-02T14:05:10.7968964Z",
+  "compiler": "rustc 1.96.0 (ac68faa20)",
+  "blocked_file": "target/verified-1.96/debug/deps/windows_implement-b4879f9cadbdf12d.dll",
+  "blocked_file_sha256": "84E61E41FACAEB3C507C06180B5D1D283498FF2CD9F43A17B62AE9F262EAEE5A",
+  "interpretation": "O compilador foi permitido, mas a política de integridade bloqueou a biblioteca gerada do procedimento de macro. A compilação foi interrompida sem alterar a política."
+}

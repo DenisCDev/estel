@@ -1,0 +1,17 @@
+{
+  "binary_version": "0.2.9",
+  "binary_sha256": "DE338FD329086281386D1BFAA97E796AC36BC4E19A5C876E93E57432D65053D4",
+  "scenario": "painel aberto e ocioso",
+  "flags": {
+    "weather_enabled": "false",
+    "tick_seconds": "30",
+    "display_enabled": "true",
+    "noise_enabled": "false",
+    "ambient_enabled": "true",
+    "color_critical_work": "false",
+    "color_vision_deficiency": "false",
+    "ambient_sample_interval_seconds": "10"
+  },
+  "camera_state": "aguardando referências, observado na interface",
+  "notes": "Configuração não alterada para a medição; identidade de câmera, local e caminhos privados omitidos."
+}

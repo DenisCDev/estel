@@ -1,0 +1,15 @@
+{
+  "measured_utc": "2026-10-02T14:19:58.5478905Z",
+  "passed": [
+    "assinatura_valida_e_sha256",
+    "arquivo_sem_assinatura",
+    "lote_parcial_nao_publicavel",
+    "manifesto_preservado_em_falha",
+    "editor_diferente",
+    "checksum_nao_sobrescreve_executavel",
+    "arquivo_ausente"
+  ],
+  "signed_fixture": "signtool.exe",
+  "unsigned_fixture": "estel.exe",
+  "estel_signed": false
+}
