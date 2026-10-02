@@ -30,10 +30,10 @@ struct Monitor {
 
 impl Drop for Monitor {
     fn drop(&mut self) {
-        if let Backend::Ddc { handle, .. } = self.backend {
-            if let Err(error) = unsafe { DestroyPhysicalMonitor(raw_handle(handle)) } {
-                tracing::debug!(%error, "identificador físico já indisponível");
-            }
+        if let Backend::Ddc { handle, .. } = self.backend
+            && let Err(error) = unsafe { DestroyPhysicalMonitor(raw_handle(handle)) }
+        {
+            tracing::debug!(%error, "identificador físico já indisponível");
         }
     }
 }

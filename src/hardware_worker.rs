@@ -294,10 +294,10 @@ impl DriverProcess {
 
 impl Drop for DriverProcess {
     fn drop(&mut self) {
-        if let Err(error) = self.child.kill() {
-            if self.child.try_wait().ok().flatten().is_none() {
-                tracing::error!(%error, "não foi possível encerrar o controle da tela");
-            }
+        if let Err(error) = self.child.kill()
+            && self.child.try_wait().ok().flatten().is_none()
+        {
+            tracing::error!(%error, "não foi possível encerrar o controle da tela");
         }
         // try_wait avoids turning a failed TerminateProcess into an unbounded wait.
         if let Err(error) = self.child.try_wait() {

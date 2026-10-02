@@ -114,6 +114,7 @@ Sessões antigas que nunca salvaram a gama original não permitem recuperar essa
 calibração: o painel informa a pendência e esse ajuste fica desabilitado.
 Tecnologia do painel só é mostrada quando o monitor a informa; OLED, IPS, VA,
 mini-LED ou cintilação não são inferidos pelo nome comercial.
+As decisões, alternativas e fontes estão em [adaptação ao hardware](docs/WINDOWS-HARDWARE.md).
 
 ### Android
 

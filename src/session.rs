@@ -192,10 +192,10 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
 }
 
 fn remove_file(path: &Path) {
-    if let Err(error) = std::fs::remove_file(path) {
-        if error.kind() != std::io::ErrorKind::NotFound {
-            tracing::warn!(%error, "não foi possível limpar o registro de recuperação");
-        }
+    if let Err(error) = std::fs::remove_file(path)
+        && error.kind() != std::io::ErrorKind::NotFound
+    {
+        tracing::warn!(%error, "não foi possível limpar o registro de recuperação");
     }
 }
 

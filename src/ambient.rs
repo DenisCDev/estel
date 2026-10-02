@@ -545,9 +545,9 @@ impl CaptureFormat {
 
     fn valid(self) -> bool {
         (80..=4096).contains(&self.width)
-            && self.width % 2 == 0
+            && self.width.is_multiple_of(2)
             && (60..=2160).contains(&self.height)
-            && self.height % 2 == 0
+            && self.height.is_multiple_of(2)
             && self.rate_denominator != 0
             && (5.0..=60.0).contains(&self.frames_per_second())
             && self.row_stride >= self.width as usize * self.kind.pixel_stride()
