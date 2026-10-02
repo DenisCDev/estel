@@ -46,6 +46,9 @@ jobs:
       - name: Test
         run: cargo test --all-targets --locked
 
+      - name: Test published installer integrity
+        run: cargo test --locked --lib update::tests::published_installer_matches_github_digest -- --ignored --exact
+
       - name: Build release
         run: cargo build --release --locked
 
