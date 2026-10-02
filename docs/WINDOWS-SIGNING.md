@@ -9,7 +9,7 @@ O modo normal do instalador continua disponível para desenvolvimento. O modo ex
 Depois de obter o certificado, mantenha sua chave no armazenamento protegido indicado pelo emissor. O exemplo abaixo usa um certificado já disponível no armazenamento pessoal do usuário e o SignTool do Windows SDK. Substitua os caminhos, a impressão digital e a URL de carimbo de tempo pelos valores do ambiente e do emissor. Não coloque senha, PFX ou chave privada no repositório. Um serviço remoto exigirá o comando oficial fornecido pelo serviço contratado; este projeto não presume qual será ele.
 
 ```powershell
-$env:ESTEL_VERSION = '0.2.9' # Use the version being published.
+$env:ESTEL_VERSION = '0.3.0' # Use the version being published.
 $signTool = 'C:\Program Files (x86)\Windows Kits\10\bin\10.0.26100.0\x64\signtool.exe'
 $iscc = 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe'
 $certificateThumbprint = 'SUBSTITUA_PELA_IMPRESSAO_DIGITAL_DE_40_HEXADECIMAIS'
