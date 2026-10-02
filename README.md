@@ -242,8 +242,9 @@ O protocolo de medição e seus limites estão em [desempenho no Windows](docs/W
 
 ### Localização, clima e orientação (Windows)
 
-Na primeira instalação, a janela de configurações solicita a localização ao
-Windows. Se o acesso for negado, busque cidade ou bairro pelo botão **Buscar**,
+Na primeira instalação, o guia oferece a localização do Windows como opção;
+a solicitação só começa quando você a ativa. Se preferir ou se o acesso for
+negado, busque cidade ou bairro pelo botão **Buscar**,
 escolha o resultado e confira o ponto no mapa. A busca é feita pelo serviço de
 geocodificação do [Open-Meteo](https://open-meteo.com/en/docs/geocoding-api),
 com dados do GeoNames. Bairros sem cadastro podem não aparecer; nesse caso,
