@@ -1,6 +1,7 @@
 //! User configuration: persisted as a hand-editable TOML file under
 //! `%APPDATA%\Roaming\condado\estel\config\config.toml`.
 
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -110,11 +111,16 @@ pub struct Config {
     /// Color and sound intensity. Switchable at runtime via tray.
     /// "alta" = full, "media" = 60 % (default), "suave" = 30 %.
     pub intensity: Intensity,
+    /// None migrates the existing Windows startup preference on first launch.
+    pub start_with_windows: Option<bool>,
 
-    /// Enable webcam-driven ambient brightness adaptation.
+    /// Enable local ambient brightness adaptation.
     pub ambient_enabled: bool,
+    /// Prefer a dedicated illuminance sensor before opening the camera.
+    pub ambient_prefer_light_sensor: bool,
     /// Index in the webcam list used to capture ambient light.
     pub ambient_camera_index: usize,
+    pub ambient_camera_id: Option<String>,
     /// Interval between samples in seconds.
     pub ambient_sample_interval_seconds: u64,
     /// Lowest screen brightness when ambient light is low.
@@ -135,11 +141,20 @@ pub struct Config {
 pub struct AmbientCalibration {
     pub device_id: String,
     pub camera_index: usize,
+    /// Capture format and observed camera controls must match both references.
+    #[serde(default)]
+    pub capture_profile: Option<String>,
     pub dark: f32,
     pub bright: f32,
 }
 
 impl AmbientCalibration {
+    pub fn matches_capture(&self, profile: &str) -> bool {
+        !profile.is_empty()
+            && profile.len() <= 4096
+            && self.capture_profile.as_deref() == Some(profile)
+    }
+
     pub fn is_valid(&self) -> bool {
         !self.device_id.is_empty()
             && self.device_id.len() <= 4096
@@ -191,8 +206,11 @@ impl Default for Config {
             color_critical_work: false,
             color_vision_deficiency: false,
             intensity: Intensity::Media,
+            start_with_windows: None,
             ambient_enabled: false,
+            ambient_prefer_light_sensor: true,
             ambient_camera_index: 0,
+            ambient_camera_id: None,
             ambient_sample_interval_seconds: 30,
             ambient_brightness_min: 0.25,
             ambient_brightness_max: 0.85,
@@ -270,7 +288,16 @@ fn default_schedule() -> Schedule {
 impl Config {
     pub fn camera_is_calibrated(&self) -> bool {
         self.ambient_calibration.as_ref().is_some_and(|value| {
-            value.camera_index == self.ambient_camera_index && value.is_valid()
+            self.ambient_camera_id
+                .as_ref()
+                .map_or(value.camera_index == self.ambient_camera_index, |id| {
+                    id == &value.device_id
+                })
+                && value.is_valid()
+                && value
+                    .capture_profile
+                    .as_ref()
+                    .is_some_and(|profile| !profile.is_empty() && profile.len() <= 4096)
         })
     }
 
@@ -279,6 +306,13 @@ impl Config {
     }
     /// `%APPDATA%\Roaming\condado\estel\config\config.toml` (or a CWD fallback).
     pub fn config_path() -> PathBuf {
+        #[cfg(windows)]
+        if let Some(root) = std::env::var_os("APPDATA")
+            .map(PathBuf::from)
+            .filter(|p| p.is_absolute())
+        {
+            return root.join("condado/estel/config/config.toml");
+        }
         if let Some(dirs) = directories::ProjectDirs::from("studio", "condado", "estel") {
             dirs.config_dir().join("config.toml")
         } else {
@@ -288,47 +322,59 @@ impl Config {
 
     /// Load the config from the default path, writing defaults on first run.
     ///
-    /// A broken file is left on disk (renamed to `config.toml.invalid`) and
-    /// in-memory defaults are used — we never silently overwrite the user's
-    /// file with a parsed-ok-but-stale clone.
-    pub fn load_or_default() -> Self {
-        let path = Self::config_path();
-        match std::fs::read_to_string(&path) {
-            Ok(text) => match toml::from_str::<Config>(&text) {
+    /// A broken file is recovered from a valid backup, preserving its original
+    /// bytes. Without a valid backup, fail instead of replacing preferences.
+    pub fn load_or_default() -> io::Result<Self> {
+        Self::load_from(&Self::config_path())
+    }
+
+    pub fn load_from(path: &Path) -> io::Result<Self> {
+        let _access = ConfigAccess::acquire()?;
+        Self::load_unlocked(path)
+    }
+
+    fn load_unlocked(path: &Path) -> io::Result<Self> {
+        match std::fs::read_to_string(path) {
+            Ok(text) => match parse_config(&text) {
                 Ok(mut cfg) => {
                     cfg.sanitize();
                     if cfg.migrate_schedule_to_sunset() {
-                        if let Err(e) = cfg.save(&path) {
+                        if let Err(e) = cfg.save_unlocked(path) {
                             tracing::warn!("não foi possível gravar a curva nova: {e}");
                         } else {
                             tracing::info!("curva atualizada: a noite agora segue o pôr do sol");
                         }
                     }
-                    cfg
+                    Ok(cfg)
                 }
                 Err(e) => {
-                    tracing::error!(
-                        "config.toml inválido ({e}); usando padrões. O arquivo original foi copiado para config.toml.invalid"
-                    );
-                    let bak = path.with_extension("toml.invalid");
-                    let _ = std::fs::copy(&path, &bak);
-                    let mut cfg = Config::default();
-                    cfg.sanitize();
-                    cfg
+                    tracing::error!(%e, "configuração inválida; tentando recuperar o backup");
+                    Self::recover_backup(path, Some(text))
                 }
             },
-            Err(_) => {
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                if path.with_extension("toml.bak").exists() {
+                    return Self::recover_backup(path, None);
+                }
                 let mut cfg = Config::default();
                 cfg.sanitize();
-                if let Err(e) = cfg.save(&path) {
-                    tracing::warn!(
-                        "não foi possível gravar o config padrão em {}: {e}",
-                        path.display()
-                    );
-                }
-                cfg
+                cfg.save_unlocked(path)?;
+                Ok(cfg)
             }
+            Err(error) => Err(error),
         }
+    }
+
+    fn recover_backup(path: &Path, invalid: Option<String>) -> io::Result<Self> {
+        let text = std::fs::read_to_string(path.with_extension("toml.bak"))?;
+        let mut cfg = parse_config(&text)?;
+        cfg.sanitize();
+        if let Some(invalid) = invalid {
+            atomic_write(&path.with_extension("toml.invalid"), invalid.as_bytes())?;
+        }
+        atomic_write(path, text.as_bytes())?;
+        tracing::warn!("preferências recuperadas do backup; arquivo danificado preservado");
+        Ok(cfg)
     }
 
     /// Clamp every user-facing field. Call after deserialize and before save.
@@ -359,7 +405,11 @@ impl Config {
         self.gamma_warm_floor_k = self.gamma_warm_floor_k.clamp(3000.0, 4500.0);
         self.tick_seconds = self.tick_seconds.clamp(5, 120);
         self.max_volume = self.max_volume.clamp(0.0, 0.70);
-        self.ambient_sample_interval_seconds = self.ambient_sample_interval_seconds.clamp(2, 120);
+        self.ambient_sample_interval_seconds = self.ambient_sample_interval_seconds.clamp(10, 120);
+        self.ambient_camera_id = self
+            .ambient_camera_id
+            .take()
+            .filter(|id| !id.is_empty() && id.len() <= 4096);
         self.ambient_brightness_min = finite_clamp(self.ambient_brightness_min, 0.25, 0.15, 1.0);
         self.ambient_brightness_max = finite_clamp(self.ambient_brightness_max, 0.85, 0.15, 1.0);
         if self
@@ -405,12 +455,59 @@ impl Config {
 
     /// Persist to `path`, creating parent directories as needed.
     pub fn save(&self, path: &Path) -> std::io::Result<()> {
+        let _access = ConfigAccess::acquire()?;
+        self.save_unlocked(path)
+    }
+
+    fn save_unlocked(&self, path: &Path) -> io::Result<()> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
         let text = toml::to_string_pretty(self)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-        std::fs::write(path, text)
+        match std::fs::read_to_string(path) {
+            Ok(previous) => {
+                parse_config(&previous)?;
+                atomic_write(&path.with_extension("toml.bak"), previous.as_bytes())?;
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        }
+        atomic_write(path, text.as_bytes())
+    }
+
+    /// Only edited fields replace the latest preferences saved by the tray or panel.
+    pub fn save_changes(&self, baseline: &Self, path: &Path) -> io::Result<Self> {
+        let _access = ConfigAccess::acquire()?;
+        let mut current =
+            toml::Value::try_from(Self::load_unlocked(path)?).map_err(io::Error::other)?;
+        let edited = toml::Value::try_from(self).map_err(io::Error::other)?;
+        let baseline = toml::Value::try_from(baseline).map_err(io::Error::other)?;
+        let edited = edited
+            .as_table()
+            .ok_or_else(|| io::Error::other("configuração inválida"))?;
+        let baseline = baseline
+            .as_table()
+            .ok_or_else(|| io::Error::other("configuração inválida"))?;
+        let current = current
+            .as_table_mut()
+            .ok_or_else(|| io::Error::other("configuração inválida"))?;
+        for (key, value) in edited {
+            if baseline.get(key) != Some(value) {
+                current.insert(key.clone(), value.clone());
+            }
+        }
+        for key in baseline.keys() {
+            if !edited.contains_key(key) {
+                current.remove(key);
+            }
+        }
+        let mut merged: Self = toml::Value::Table(current.clone())
+            .try_into()
+            .map_err(io::Error::other)?;
+        merged.sanitize();
+        merged.save_unlocked(path)?;
+        Ok(merged)
     }
 
     /// Wake time as minutes since local midnight.
@@ -424,6 +521,109 @@ impl Config {
     }
 }
 
+fn parse_config(text: &str) -> io::Result<Config> {
+    let value: toml::Value = toml::from_str(text).map_err(io::Error::other)?;
+    if value.as_table().is_none_or(|table| table.is_empty()) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "arquivo de configuração vazio",
+        ));
+    }
+    value.try_into().map_err(io::Error::other)
+}
+
+struct ConfigAccess {
+    #[cfg(windows)]
+    handle: windows::Win32::Foundation::HANDLE,
+}
+
+impl ConfigAccess {
+    fn acquire() -> io::Result<Self> {
+        #[cfg(windows)]
+        {
+            use windows::Win32::Foundation::{CloseHandle, WAIT_ABANDONED, WAIT_OBJECT_0};
+            use windows::Win32::System::Threading::{CreateMutexW, WaitForSingleObject};
+            let handle = unsafe {
+                CreateMutexW(None, false, windows::core::w!("Local\\EstelConfiguration"))
+            }
+            .map_err(io::Error::other)?;
+            let wait = unsafe { WaitForSingleObject(handle, 2000) };
+            if wait != WAIT_OBJECT_0 && wait != WAIT_ABANDONED {
+                if let Err(error) = unsafe { CloseHandle(handle) } {
+                    tracing::warn!(%error, "não foi possível liberar o acesso à configuração");
+                }
+                return Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "outra janela está salvando a configuração; tente novamente",
+                ));
+            }
+            Ok(Self { handle })
+        }
+        #[cfg(not(windows))]
+        Ok(Self {})
+    }
+}
+
+impl Drop for ConfigAccess {
+    fn drop(&mut self) {
+        #[cfg(windows)]
+        {
+            use windows::Win32::Foundation::CloseHandle;
+            use windows::Win32::System::Threading::ReleaseMutex;
+            if let Err(error) = unsafe { ReleaseMutex(self.handle) } {
+                tracing::warn!(%error, "não foi possível liberar o bloqueio da configuração");
+            }
+            if let Err(error) = unsafe { CloseHandle(self.handle) } {
+                tracing::warn!(%error, "não foi possível fechar o acesso à configuração");
+            }
+        }
+    }
+}
+
+pub(crate) fn atomic_write(path: &Path, data: &[u8]) -> io::Result<()> {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let temporary = path.with_extension(format!(
+        "tmp-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
+    let result = (|| {
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary)?;
+        file.write_all(data)?;
+        file.sync_all()?;
+        drop(file);
+        #[cfg(windows)]
+        {
+            use std::os::windows::ffi::OsStrExt;
+            use windows::Win32::Storage::FileSystem::{
+                MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH, MoveFileExW,
+            };
+            let source: Vec<u16> = temporary.as_os_str().encode_wide().chain(Some(0)).collect();
+            let destination: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+            unsafe {
+                MoveFileExW(
+                    windows::core::PCWSTR(source.as_ptr()),
+                    windows::core::PCWSTR(destination.as_ptr()),
+                    MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+                )
+            }
+            .map_err(io::Error::other)
+        }
+        #[cfg(not(windows))]
+        std::fs::rename(&temporary, path)
+    })();
+    if result.is_err()
+        && let Err(error) = std::fs::remove_file(&temporary)
+        && error.kind() != io::ErrorKind::NotFound
+    {
+        tracing::warn!(%error, "não foi possível remover o arquivo temporário da configuração");
+    }
+    result
+}
+
 fn parse_hhmm(s: &str) -> f64 {
     let mut it = s.split(':');
     let h: f64 = it.next().and_then(|x| x.trim().parse().ok()).unwrap_or(0.0);
@@ -435,11 +635,181 @@ fn parse_hhmm(s: &str) -> f64 {
 mod tests {
     use super::*;
 
+    struct ConfigDirectory(PathBuf);
+
+    impl ConfigDirectory {
+        fn new() -> Self {
+            static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            let path = std::env::temp_dir().join(format!(
+                "estel-config-test-{}-{}",
+                std::process::id(),
+                NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            ));
+            std::fs::create_dir(&path).unwrap();
+            Self(path)
+        }
+
+        fn config(&self) -> PathBuf {
+            self.0.join("config.toml")
+        }
+    }
+
+    impl Drop for ConfigDirectory {
+        fn drop(&mut self) {
+            std::fs::remove_dir_all(&self.0).expect("remove test configuration");
+        }
+    }
+
+    #[test]
+    fn saving_keeps_the_previous_preferences_as_a_valid_backup() {
+        let directory = ConfigDirectory::new();
+        let path = directory.config();
+        let mut cfg = Config {
+            wake: "08:00".into(),
+            ambient_enabled: true,
+            ..Config::default()
+        };
+        cfg.save(&path).unwrap();
+        cfg.wake = "09:00".into();
+        cfg.save(&path).unwrap();
+        let backup: Config =
+            toml::from_str(&std::fs::read_to_string(path.with_extension("toml.bak")).unwrap())
+                .unwrap();
+        assert_eq!(backup.wake, "08:00");
+        assert!(backup.ambient_enabled);
+        let saved: Config = toml::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+        assert_eq!(saved.wake, "09:00");
+    }
+
+    #[test]
+    fn saving_does_not_replace_an_unreadable_or_corrupt_config() {
+        let directory = ConfigDirectory::new();
+        let path = directory.config();
+        let corrupt = "wake = \"08:";
+        std::fs::write(&path, corrupt).unwrap();
+        assert!(Config::default().save(&path).is_err());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), corrupt);
+    }
+
+    #[test]
+    fn corrupt_or_missing_primary_recovers_preferences_from_backup() {
+        for missing in [false, true] {
+            let directory = ConfigDirectory::new();
+            let path = directory.config();
+            let cfg = Config {
+                wake: "08:00".into(),
+                ambient_enabled: true,
+                intensity: Intensity::Alta,
+                ..Config::default()
+            };
+            cfg.save(&path).unwrap();
+            cfg.save(&path).unwrap();
+            if missing {
+                std::fs::remove_file(&path).unwrap();
+            } else {
+                std::fs::write(&path, "wake = \"08:").unwrap();
+            }
+            let recovered = Config::load_from(&path).unwrap();
+            assert_eq!(recovered.wake, "08:00");
+            assert!(recovered.ambient_enabled);
+            assert_eq!(recovered.intensity, Intensity::Alta);
+            assert_eq!(Config::load_from(&path).unwrap().wake, "08:00");
+            if !missing {
+                assert_eq!(
+                    std::fs::read_to_string(path.with_extension("toml.invalid")).unwrap(),
+                    "wake = \"08:"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn loading_corrupt_without_backup_or_directory_never_creates_defaults() {
+        let directory = ConfigDirectory::new();
+        let path = directory.config();
+        std::fs::write(&path, "wake = \"08:").unwrap();
+        assert!(Config::load_from(&path).is_err());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "wake = \"08:");
+        std::fs::remove_file(&path).unwrap();
+        std::fs::create_dir(&path).unwrap();
+        assert!(Config::load_from(&path).is_err());
+        assert!(path.is_dir());
+    }
+
+    #[test]
+    fn empty_primary_recovers_the_backup_instead_of_resetting_preferences() {
+        for empty in ["", "   \n", "# interrupted save\n"] {
+            let directory = ConfigDirectory::new();
+            let path = directory.config();
+            let config = Config {
+                wake: "08:00".into(),
+                ..Config::default()
+            };
+            config.save(&path).unwrap();
+            config.save(&path).unwrap();
+            std::fs::write(&path, empty).unwrap();
+            assert_eq!(Config::load_from(&path).unwrap().wake, "08:00");
+            assert_eq!(
+                std::fs::read_to_string(path.with_extension("toml.invalid")).unwrap(),
+                empty
+            );
+        }
+    }
+
+    #[test]
+    fn an_open_panel_does_not_overwrite_newer_tray_preferences() {
+        let directory = ConfigDirectory::new();
+        let path = directory.config();
+        let initial = Config::default();
+        initial.save(&path).unwrap();
+        let mut tray = initial.clone();
+        tray.intensity = Intensity::Alta;
+        tray.start_with_windows = Some(false);
+        tray.save_changes(&initial, &path).unwrap();
+        let mut panel = initial.clone();
+        panel.wake = "08:00".into();
+        let merged = panel.save_changes(&initial, &path).unwrap();
+        assert_eq!(merged.wake, "08:00");
+        assert_eq!(merged.intensity, Intensity::Alta);
+        assert_eq!(merged.start_with_windows, Some(false));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn simultaneous_panel_and_tray_saves_preserve_both_edits() {
+        let directory = ConfigDirectory::new();
+        let path = directory.config();
+        let baseline = Config::default();
+        baseline.save(&path).unwrap();
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+        std::thread::scope(|scope| {
+            for field in 0..2 {
+                let baseline = &baseline;
+                let path = &path;
+                let barrier = barrier.clone();
+                scope.spawn(move || {
+                    let mut config = baseline.clone();
+                    if field == 0 {
+                        config.wake = "08:00".into();
+                    } else {
+                        config.intensity = Intensity::Alta;
+                    }
+                    barrier.wait();
+                    config.save_changes(baseline, path).unwrap();
+                });
+            }
+        });
+        let saved = Config::load_from(&path).unwrap();
+        assert_eq!(saved.wake, "08:00");
+        assert_eq!(saved.intensity, Intensity::Alta);
+    }
+
     #[test]
     fn calibration_rejects_wrong_device_missing_contrast_and_extrapolation() {
         let calibration = AmbientCalibration {
             device_id: "camera-a".into(),
             camera_index: 0,
+            capture_profile: Some("YUY2:320x240:5/1:exposure=-6".into()),
             dark: 0.2,
             bright: 0.6,
         };
@@ -464,6 +834,28 @@ mod tests {
                 .is_valid()
             );
         }
+    }
+
+    #[test]
+    fn camera_references_require_the_same_capture_profile_and_legacy_anchors_are_preserved() {
+        let calibration = AmbientCalibration {
+            device_id: "camera-a".into(),
+            camera_index: 0,
+            capture_profile: Some("YUY2:160x120:5/1".into()),
+            dark: 0.2,
+            bright: 0.6,
+        };
+        assert!(calibration.matches_capture("YUY2:160x120:5/1"));
+        assert!(!calibration.matches_capture("YUY2:640x480:30/1"));
+        let mut config = Config {
+            ambient_calibration: Some(calibration),
+            ..Config::default()
+        };
+        assert!(config.camera_is_calibrated());
+        config.ambient_calibration.as_mut().unwrap().capture_profile = None;
+        config.sanitize();
+        assert!(!config.camera_is_calibrated());
+        assert!(config.ambient_calibration.is_some());
     }
 
     #[test]
@@ -560,7 +952,7 @@ noise = "pink"
             ..Config::default()
         };
         cfg.sanitize();
-        assert!(cfg.ambient_sample_interval_seconds >= 2);
+        assert!(cfg.ambient_sample_interval_seconds >= 10);
         assert!(cfg.ambient_brightness_min <= cfg.ambient_brightness_max);
         assert!((cfg.ambient_brightness_min - 0.15).abs() < f32::EPSILON);
         assert!((cfg.ambient_brightness_max - 1.0).abs() < f32::EPSILON);

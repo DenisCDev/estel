@@ -26,12 +26,21 @@ VersionInfoVersion={#AppVersion}
 VersionInfoDescription=Instalador do Estel
 VersionInfoCompany=Denis Scarabelli
 VersionInfoProductName=Estel
+#ifdef EstelSignedBuild
+SignTool=estel_release
+SignedUninstaller=yes
+SignToolRetryCount=0
+#endif
 
 [Languages]
 Name: "brazilianportuguese"; MessagesFile: "compiler:Languages\BrazilianPortuguese.isl"
 
 [Files]
+#ifdef EstelSignedBuild
+Source: "..\target\release\estel.exe"; DestDir: "{app}"; Flags: ignoreversion sign
+#else
 Source: "..\target\release\estel.exe"; DestDir: "{app}"; Flags: ignoreversion
+#endif
 
 [Icons]
 Name: "{autoprograms}\Estel"; Filename: "{app}\estel.exe"; Parameters: "--settings"; WorkingDir: "{app}"

@@ -131,6 +131,14 @@ impl Audio {
     pub fn is_silent(&self) -> bool {
         self.active_color.is_none() && self.current <= 1e-4
     }
+
+    pub fn needs_tick(&self) -> bool {
+        envelope_needs_tick(self.active_color, self.current, self.fade_to)
+    }
+}
+
+fn envelope_needs_tick(color: Option<NoiseColor>, current: f32, target: f32) -> bool {
+    (current - target).abs() > 1e-5 || (color.is_some() && target == 0.0)
 }
 
 /// Raised-cosine from `from` to `to` over [`FADE_SECS`]. Independent of
@@ -152,6 +160,14 @@ fn append_noise(player: &Player, color: NoiseColor) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn steady_audio_does_not_require_host_polling() {
+        assert!(!envelope_needs_tick(Some(NoiseColor::Pink), 0.1, 0.1));
+        assert!(envelope_needs_tick(Some(NoiseColor::Pink), 0.05, 0.1));
+        assert!(envelope_needs_tick(Some(NoiseColor::Pink), 0.0, 0.0));
+        assert!(!envelope_needs_tick(None, 0.0, 0.0));
+    }
 
     #[test]
     fn volume_never_exceeds_hard_cap() {

@@ -1,0 +1,259 @@
+[
+  {
+    "scenario": "baseline_029_bandeja",
+    "source": "baseline_029_bandeja_20261002T135146906Z_33320.json",
+    "duration_seconds": 58.282,
+    "observer_cpu_seconds": 5.3125,
+    "warnings": [],
+    "roles": [
+      {
+        "role": "dwm",
+        "samples": 29,
+        "cpu_percent_machine": 6.24138,
+        "working_set_mean_mib": 77.481,
+        "private_bytes_mean_mib": 214.154,
+        "handles_min": 3387.0,
+        "handles_max": 3390.0,
+        "threads_min": 49.0,
+        "threads_max": 49.0,
+        "gpu_engines": {
+          "3D": {
+            "mean": 8.89655172413793,
+            "max": 9.0,
+            "samples": 29
+          },
+          "Copy": {
+            "mean": 0.0,
+            "max": 0.0,
+            "samples": 29
+          },
+          "Video JPEG 0": {
+            "mean": 0.0,
+            "max": 0.0,
+            "samples": 29
+          },
+          "Timer 0": {
+            "mean": 0.0,
+            "max": 0.0,
+            "samples": 29
+          },
+          "Video Codec Engine": {
+            "mean": 0.0,
+            "max": 0.0,
+            "samples": 29
+          },
+          "Compute 0": {
+            "mean": 0.0,
+            "max": 0.0,
+            "samples": 29
+          },
+          "Security 1": {
+            "mean": 0.0,
+            "max": 0.0,
+            "samples": 29
+          }
+        }
+      },
+      {
+        "role": "principal",
+        "samples": 29,
+        "cpu_percent_machine": 0.01167,
+        "working_set_mean_mib": 28.338,
+        "private_bytes_mean_mib": 3.662,
+        "handles_min": 300.0,
+        "handles_max": 311.0,
+        "threads_min": 9.0,
+        "threads_max": 10.0,
+        "gpu_engines": {}
+      }
+    ]
+  },
+  {
+    "scenario": "baseline_029_painel_aberto",
+    "source": "baseline_029_painel_aberto_20261002T134750463Z_33320.json",
+    "duration_seconds": 58.22,
+    "observer_cpu_seconds": 5.32812,
+    "warnings": [
+      "Um processo encerrou ou deixou de permitir leitura durante uma amostra."
+    ],
+    "roles": [
+      {
+        "role": "filho",
+        "samples": 29,
+        "cpu_percent_machine": 0.22745,
+        "working_set_mean_mib": 101.384,
+        "private_bytes_mean_mib": 138.719,
+        "handles_min": 457.0,
+        "handles_max": 457.0,
+        "threads_min": 13.0,
+        "threads_max": 13.0,
+        "gpu_engines": {
+          "Timer 0": {
+            "mean": 0.0,
+            "max": 0.0,
+            "samples": 29
+          },
+          "Video Codec Engine": {
+            "mean": 0.0,
+            "max": 0.0,
+            "samples": 29
+          },
+          "Security 1": {
+            "mean": 0.0,
+            "max": 0.0,
+            "samples": 29
+          },
+          "3D": {
+            "mean": 0.034482758620689655,
+            "max": 1.0,
+            "samples": 29
+          },
+          "Copy": {
+            "mean": 0.0,
+            "max": 0.0,
+            "samples": 29
+          },
+          "Video JPEG 0": {
+            "mean": 0.0,
+            "max": 0.0,
+            "samples": 29
+          },
+          "Compute 0": {
+            "mean": 0.0,
+            "max": 0.0,
+            "samples": 29
+          }
+        }
+      },
+      {
+        "role": "principal",
+        "samples": 29,
+        "cpu_percent_machine": 0.0116,
+        "working_set_mean_mib": 28.155,
+        "private_bytes_mean_mib": 3.672,
+        "handles_min": 314.0,
+        "handles_max": 314.0,
+        "threads_min": 10.0,
+        "threads_max": 10.0,
+        "gpu_engines": {}
+      }
+    ]
+  },
+  {
+    "scenario": "baseline_029_painel_dwm",
+    "source": "baseline_029_painel_dwm_20261002T135509450Z_33320.json",
+    "duration_seconds": 58.319,
+    "observer_cpu_seconds": 7.0,
+    "warnings": [],
+    "roles": [
+      {
+        "role": "dwm",
+        "samples": 29,
+        "cpu_percent_machine": 7.24425,
+        "working_set_mean_mib": 77.262,
+        "private_bytes_mean_mib": 214.438,
+        "handles_min": 3390.0,
+        "handles_max": 3410.0,
+        "threads_min": 49.0,
+        "threads_max": 49.0,
+        "gpu_engines": {
+          "Copy": {
+            "mean": 0.0,
+            "max": 0.0,
+            "samples": 29
+          },
+          "Video Codec Engine": {
+            "mean": 0.0,
+            "max": 0.0,
+            "samples": 29
+          },
+          "3D": {
+            "mean": 8.344827586206897,
+            "max": 9.0,
+            "samples": 29
+          },
+          "Timer 0": {
+            "mean": 0.0,
+            "max": 0.0,
+            "samples": 29
+          },
+          "Video JPEG 0": {
+            "mean": 0.0,
+            "max": 0.0,
+            "samples": 29
+          },
+          "Compute 0": {
+            "mean": 0.0,
+            "max": 0.0,
+            "samples": 29
+          },
+          "Security 1": {
+            "mean": 0.0,
+            "max": 0.0,
+            "samples": 29
+          }
+        }
+      },
+      {
+        "role": "filho",
+        "samples": 29,
+        "cpu_percent_machine": 0.0,
+        "working_set_mean_mib": 111.753,
+        "private_bytes_mean_mib": 138.432,
+        "handles_min": 452.0,
+        "handles_max": 459.0,
+        "threads_min": 10.0,
+        "threads_max": 14.0,
+        "gpu_engines": {
+          "Copy": {
+            "mean": 0.0,
+            "max": 0.0,
+            "samples": 29
+          },
+          "Video Codec Engine": {
+            "mean": 0.0,
+            "max": 0.0,
+            "samples": 29
+          },
+          "3D": {
+            "mean": 0.0,
+            "max": 0.0,
+            "samples": 29
+          },
+          "Timer 0": {
+            "mean": 0.0,
+            "max": 0.0,
+            "samples": 29
+          },
+          "Video JPEG 0": {
+            "mean": 0.0,
+            "max": 0.0,
+            "samples": 29
+          },
+          "Compute 0": {
+            "mean": 0.0,
+            "max": 0.0,
+            "samples": 29
+          },
+          "Security 1": {
+            "mean": 0.0,
+            "max": 0.0,
+            "samples": 29
+          }
+        }
+      },
+      {
+        "role": "principal",
+        "samples": 29,
+        "cpu_percent_machine": 0.01399,
+        "working_set_mean_mib": 28.397,
+        "private_bytes_mean_mib": 3.7,
+        "handles_min": 300.0,
+        "handles_max": 313.0,
+        "threads_min": 8.0,
+        "threads_max": 9.0,
+        "gpu_engines": {}
+      }
+    ]
+  }
+]

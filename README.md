@@ -48,9 +48,9 @@ Não precisa instalar Git, Rust nem abrir o terminal.
 O instalador funciona por usuário, sem pedir senha de administrador. Ele cria um
 atalho no menu Iniciar e ativa **Iniciar com o Windows** na primeira instalação;
 essa opção pode ser desligada no menu da bandeja. O aplicativo pode ser removido
-pelas Configurações do Windows. Como
-o aplicativo ainda não tem assinatura digital, o Windows pode mostrar o
-SmartScreen: clique em **Mais informações** e depois em **Executar assim mesmo**.
+pelas Configurações do Windows. O aplicativo ainda não tem assinatura digital;
+o SmartScreen pode avisar e o Smart App Control pode impedir a execução.
+A preparação da publicação assinada está em [assinatura no Windows](docs/WINDOWS-SIGNING.md).
 
 Quem não quiser instalar pode baixar o
 [`estel-portable-x86_64.exe`](https://github.com/DenisCDev/estel/releases/latest/download/estel-portable-x86_64.exe)
@@ -67,6 +67,13 @@ Na bandeja:
 - **Fechar Estel** — restaura gama e backlight
 
 Primeira execução grava `%APPDATA%\condado\estel\config\config.toml`.
+As gravações substituem o arquivo inteiro apenas depois de concluídas e mantêm
+as preferências anteriores em `config.toml.bak`. Se o arquivo principal ficar
+danificado, o Estel recupera esse backup e preserva o conteúdo danificado em
+`config.toml.invalid`; sem backup válido, avisa em vez de gravar padrões.
+Alterações pelo painel e pela bandeja preservam os campos que você não editou.
+A preferência de iniciar com o Windows também fica salva para reparar um
+registro removido ou com caminho antigo na próxima abertura do aplicativo.
 
 ### Atualizar ou remover
 
@@ -94,13 +101,20 @@ o ajuste voltou ao horário. Se outro aplicativo estiver usando a
 câmera, libere-a para tentar novamente; o log do Estel registra uma orientação
 para essa falha.
 
-Com duas telas, o Estel só usa o controle físico de brilho e a gama quando
-todas aceitam o ajuste. Se uma não responder ou a conexão dos monitores mudar,
-uma sobreposição comum mantém os ajustes sincronizados nessa sessão. Brilho e
-cores percebidos ainda dependem da calibração própria de cada monitor.
-Se uma sessão antiga terminou abruptamente com vários monitores, o registro
-anterior não identifica cada tela. O Estel preserva esse registro e usa a
-sobreposição, sem arriscar restaurar o brilho físico na tela errada.
+Cada tela escolhe seu próprio ajuste: brilho físico por DDC/CI ou WMI quando
+disponível, gama somente em SDR confirmado e sobreposição nos demais casos.
+Conectar ou trocar uma tela dispara nova identificação. HDR e gerenciamento
+avançado de cor permanecem sob controle do Windows. A redução de brilho por
+sobreposição é preta; o aquecimento por sobreposição é aproximado e pode elevar
+as sombras. Ele não equivale a uma transformação de cor HDR.
+
+O Estel salva brilho e gama originais por identidade antes de alterá-los. Se um
+monitor estiver ausente na restauração, mantém o registro para tentar novamente.
+Sessões antigas que nunca salvaram a gama original não permitem recuperar essa
+calibração: o painel informa a pendência e esse ajuste fica desabilitado.
+Tecnologia do painel só é mostrada quando o monitor a informa; OLED, IPS, VA,
+mini-LED ou cintilação não são inferidos pelo nome comercial.
+As decisões, alternativas e fontes estão em [adaptação ao hardware](docs/WINDOWS-HARDWARE.md).
 
 ### Android
 
@@ -158,18 +172,25 @@ ou garantia de benefício clínico. O Android mantém sua implementação própr
 Não tem conta nem coleta de imagens. As consultas online opcionais enviam a busca
 digitada ou as coordenadas ao Open-Meteo; os quadros da câmera permanecem locais.
 
-### Luz ambiente por câmera (Windows)
+### Luz ambiente por sensor ou câmera (Windows)
 
-O ajuste por câmera vem desligado em novas instalações. Quem quiser pode ativar
-a opção e escolher a webcam nas configurações. Capture **ambiente escuro** e,
+O ajuste por luz ambiente vem desligado em novas instalações. Quando ativado,
+pode preferir o sensor de iluminação do Windows; se ele não estiver disponível,
+usa a câmera calibrada e depois horário/clima. O sensor fornece lux, enquanto
+a câmera fornece apenas claridade relativa. Quem usar a webcam deve capturar **ambiente escuro** e,
 depois, **ambiente claro**, mantendo câmera e tela na mesma posição e usando
 luz ambiente difusa. As etapas podem ser feitas em momentos diferentes enquanto
-o painel estiver aberto. Até as referências serem aceitas, usa horário/clima.
+o painel estiver aberto. Até as referências serem aceitas, a alternativa à câmera
+é o sensor de luz habilitado ou horário/clima.
 O Estel aguarda pelo menos 500 ms após abrir a câmera e confere cinco quadros,
 calculando a média de até 8.000 pixels por quadro. Descarta os quadros em memória
 e fecha o acesso. A leitura
 padrão acontece a cada 30 segundos, tem limite de 5 segundos e o resultado é
-suavizado antes de alterar o brilho.
+suavizado antes de alterar o brilho. O Estel negocia resolução, formato e FPS
+suportados, priorizando baixo tráfego de captura, e vincula as referências ao
+perfil usado. Mudanças incompatíveis pedem nova calibração. Telas apagadas,
+bloqueio de sessão e suspensão interrompem novas capturas e descartam leituras
+em andamento; um helper já iniciado pode levar até cinco segundos para encerrar.
 
 Se a câmera estiver indisponível, o brilho segue a curva por horário com uma
 correção limitada pela radiação solar, se a consulta de clima estiver ativa.
@@ -189,11 +210,16 @@ o brilho estimado corrige parcialmente a curva por
 horário, respeitando os tetos pessoais de dia e descanso. O clima respeita os
 mesmos tetos, inclusive antes de dormir quando ainda há sol. A câmera tem
 prioridade sobre a estimativa de clima; desativar a opção restaura a curva com
-clima opcional e não abre a câmera. Se o Windows tiver um sensor de luz ambiente,
-experimente o brilho automático do próprio sistema primeiro e evite dois
-controladores automáticos ao mesmo tempo. Para testar só o brilho do Windows,
+clima opcional e não abre a câmera. Se usar o brilho automático nativo do Windows,
+evite dois controladores automáticos simultâneos. Para testar só o brilho do Windows,
 pause os ajustes de tela do Estel; isso também pausa sua alteração de cor.
 Desligar apenas a câmera mantém o brilho por horário do Estel em funcionamento.
+
+O processo principal aguarda eventos do Windows em vez de acordar a cada 50 ms;
+esse intervalo curto fica reservado às transições de áudio. Chamadas de drivers
+ficam em um processo separado com prazo e uma única intenção pendente. O painel
+atualiza informações por evento, sem consultar o arquivo de clima a cada quadro.
+O protocolo de medição e seus limites estão em [desempenho no Windows](docs/WINDOWS-PERFORMANCE.md).
 
 ### Localização, clima e orientação (Windows)
 
@@ -215,6 +241,9 @@ tela fica de frente, de costas ou de lado para ela. O cálculo usa a posição
 aproximada do sol e a radiação direta para estimar um acréscimo limitado de
 brilho. Não mede nem remove reflexos, cortinas ou luz artificial no cômodo.
 A câmera, quando funciona, sempre tem prioridade sobre essa estimativa.
+Se conectar ou reconectar a webcam com o painel aberto, use **Buscar câmeras
+novamente** na seção de luz ambiente. A câmera calibrada é localizada pela
+identidade do dispositivo mesmo quando o Windows altera a ordem das webcams.
 Nascer e pôr do sol da localização continuam definindo a curva de cor.
 
 A janela de configurações usa quatro cenas ilustradas derivadas do mascote

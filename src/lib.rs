@@ -14,11 +14,21 @@ pub mod config;
 #[cfg(windows)]
 pub mod display;
 #[cfg(windows)]
+pub mod display_topology;
+#[cfg(windows)]
+pub mod hardware_wmi;
+#[cfg(windows)]
+pub mod hardware_worker;
+#[cfg(windows)]
 pub mod location;
 #[cfg(windows)]
 pub mod overlay;
+#[cfg(windows)]
+pub mod runtime;
 pub mod schedule;
 pub mod session;
+#[cfg(windows)]
+pub mod status;
 pub mod target;
 #[cfg(windows)]
 pub mod tray;

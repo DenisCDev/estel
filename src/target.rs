@@ -18,7 +18,7 @@ pub enum NoiseColor {
 }
 
 /// Desired ambient environment at one instant.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct Target {
     /// White point in Kelvin (warm ~1900 .. neutral ~6500).
     pub cct_kelvin: f32,

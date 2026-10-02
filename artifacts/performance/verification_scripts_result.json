@@ -1,0 +1,16 @@
+{
+  "measured_utc": "2026-10-02T14:19:58.6884042Z",
+  "parsed_scripts": [
+    "Install-VerifiedRust.ps1",
+    "Measure-Estel.ps1",
+    "Measure-EstelCamera.ps1",
+    "Test-EstelSignatures.ps1",
+    "Test-EstelSignatures.Tests.ps1"
+  ],
+  "invalid_scenario_rejected": true,
+  "invalid_duration_rejected": true,
+  "csv_json_row_count": 6,
+  "gpu_timeout_reported_and_recovered": true,
+  "estel_signed": false,
+  "build_local": "bloqueado_por_code_integrity"
+}

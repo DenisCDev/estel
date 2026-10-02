@@ -1,0 +1,16 @@
+{
+  "scenario": "baseline_029",
+  "binary_version": "0.2.9",
+  "binary_sha256": "DE338FD329086281386D1BFAA97E796AC36BC4E19A5C876E93E57432D65053D4",
+  "measured_utc": "2026-10-02T13:58:03.2779288Z",
+  "duration_seconds": 1.2328,
+  "cpu_seconds_observed": 0.125,
+  "peak_working_set_bytes_observed": 30896128,
+  "exit_code": 0,
+  "timed_out": false,
+  "valid_reading": true,
+  "relative_luminance": 0.3699589,
+  "stderr_present": false,
+  "warnings": [],
+  "limitations": "Amostragem a cada 100 ms pode perder o último trecho de CPU; frames e identificadores de câmera não são salvos. Não mede lux, nits, watts ou joules."
+}
