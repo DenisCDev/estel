@@ -18,7 +18,7 @@ use windows::Win32::Media::MediaFoundation::{
     IMF2DBuffer, IMFActivate, IMFMediaBuffer, IMFMediaSource, IMFMediaType, IMFSourceReader,
     MF_DEVSOURCE_ATTRIBUTE_FRIENDLY_NAME, MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE,
     MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_GUID,
-    MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_SYMBOLIC_LINK, MF_E_NO_MORE_TYPES,
+    MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_SYMBOLIC_LINK, MF_E_NO_MORE_TYPES, MF_E_SHUTDOWN,
     MF_MT_DEFAULT_STRIDE, MF_MT_FRAME_RATE, MF_MT_FRAME_SIZE, MF_MT_MAJOR_TYPE, MF_MT_SUBTYPE,
     MF_MT_VIDEO_NOMINAL_RANGE, MF_SOURCE_READER_ALL_STREAMS, MF_SOURCE_READER_FIRST_VIDEO_STREAM,
     MF_SOURCE_READERF_CURRENTMEDIATYPECHANGED, MF_SOURCE_READERF_ENDOFSTREAM,
@@ -426,15 +426,7 @@ pub fn sample_luminance(
         MFCreateSourceReaderFromMediaSource(&source.0, None).map_err(|error| error.to_string())?
     };
     let format = select_capture_format(&reader)?;
-    let (controls, confidence) = camera_controls(&source.0);
-    let capture_profile = format!("v1:{}:{controls}", format.profile());
-    let mode_description = format!(
-        "{} × {} · {:.1} fps · {} · {confidence}",
-        format.width,
-        format.height,
-        format.frames_per_second(),
-        format.kind.label()
-    );
+    let mut controls = None;
     let started = Instant::now();
     let mut readings = Vec::with_capacity(5);
     for _ in 0..120 {
@@ -465,10 +457,14 @@ pub fn sample_luminance(
         if started.elapsed() >= Duration::from_secs(4) {
             break;
         }
-        if started.elapsed() < Duration::from_millis(500) {
+        let Some(sample) = sample else { continue };
+        if controls.is_none()
+            && !check_capture_controls(&mut controls, started.elapsed(), || {
+                camera_controls(&source.0)
+            })?
+        {
             continue;
         }
-        let Some(sample) = sample else { continue };
         let buffer = unsafe {
             sample
                 .ConvertToContiguousBuffer()
@@ -480,9 +476,19 @@ pub fn sample_luminance(
         }
     }
     let luminance = stable_luminance(&readings)?;
-    if camera_controls(&source.0).0 != controls {
-        return Err("Os controles da câmera mudaram durante a leitura. Tente novamente.".into());
-    }
+    check_capture_controls(&mut controls, started.elapsed(), || {
+        camera_controls(&source.0)
+    })?;
+    let (controls, confidence) =
+        controls.ok_or_else(|| "A câmera não enviou quadros após a estabilização.".to_owned())?;
+    let capture_profile = format!("v1:{}:{controls}", format.profile());
+    let mode_description = format!(
+        "{} × {} · {:.1} fps · {} · {confidence}",
+        format.width,
+        format.height,
+        format.frames_per_second(),
+        format.kind.label()
+    );
     Ok(AmbientSample {
         device_id: camera_attribute(
             device,
@@ -498,7 +504,10 @@ struct CameraSource(IMFMediaSource);
 
 impl Drop for CameraSource {
     fn drop(&mut self) {
-        if let Err(error) = unsafe { self.0.Shutdown() } {
+        // The source reader normally shuts down its source when released first.
+        if let Err(error) = unsafe { self.0.Shutdown() }
+            && error.code() != MF_E_SHUTDOWN
+        {
             tracing::warn!(%error, "camera source shutdown failed");
         }
     }
@@ -706,6 +715,29 @@ fn decoded_media_type(native: &IMFMediaType) -> Result<IMFMediaType, String> {
         }
     }
     Ok(decoded)
+}
+
+fn check_capture_controls(
+    initial: &mut Option<(String, &'static str)>,
+    elapsed: Duration,
+    read_controls: impl FnOnce() -> (String, &'static str),
+) -> Result<bool, String> {
+    // Controls before streaming can differ from the first usable frame's settings.
+    if elapsed < Duration::from_millis(500) {
+        return Ok(false);
+    }
+    let current = read_controls();
+    if let Some((profile, _)) = initial {
+        if *profile != current.0 {
+            tracing::warn!(before = %profile, after = %current.0, "camera controls changed during capture");
+            return Err(
+                "Os controles da câmera mudaram durante a leitura. Tente novamente.".into(),
+            );
+        }
+    } else {
+        *initial = Some(current);
+    }
+    Ok(true)
 }
 
 fn camera_controls(source: &IMFMediaSource) -> (String, &'static str) {
@@ -1018,8 +1050,8 @@ fn smooth_factor(previous: Option<f32>, measured: f32, min_factor: f32, max_fact
 #[cfg(test)]
 mod tests {
     use super::{
-        AmbientCommand, CaptureFormat, PixelFormat, apply_command, control_profile,
-        planar_luminance,
+        AmbientCommand, CaptureFormat, PixelFormat, apply_command, check_capture_controls,
+        control_profile, planar_luminance,
     };
     use super::{
         MAX_PIXEL_SAMPLES, frame_luminance, helper_error, sample_stride, smooth_factor,
@@ -1027,6 +1059,7 @@ mod tests {
     };
     use super::{push_stable_reading, select_camera_index};
     use crate::config::Config;
+    use std::time::Duration;
 
     fn format(width: u32, height: u32, fps: u32, kind: PixelFormat) -> CaptureFormat {
         CaptureFormat {
@@ -1106,6 +1139,68 @@ mod tests {
             control_profile(Some((-5, 1)))
         );
         assert_eq!(control_profile(None), "unknown");
+    }
+
+    #[test]
+    fn control_changes_before_usable_frames_do_not_invalidate_the_capture() {
+        let mut initial = None;
+        assert!(
+            !check_capture_controls(&mut initial, Duration::from_millis(499), || {
+                (control_profile(Some((0, 2))), "manual")
+            })
+            .unwrap()
+        );
+        assert!(initial.is_none());
+        assert!(
+            check_capture_controls(&mut initial, Duration::from_millis(500), || {
+                (control_profile(Some((8, 2))), "manual")
+            })
+            .unwrap()
+        );
+        assert_eq!(initial.as_ref().unwrap().0, "fixed:8:2");
+        assert!(
+            check_capture_controls(&mut initial, Duration::from_secs(2), || {
+                (control_profile(Some((8, 2))), "manual")
+            })
+            .unwrap()
+        );
+    }
+
+    #[test]
+    fn manual_control_changes_during_usable_frames_reject_the_capture() {
+        let mut initial = None;
+        assert!(
+            check_capture_controls(&mut initial, Duration::from_millis(500), || {
+                (control_profile(Some((8, 2))), "manual")
+            })
+            .unwrap()
+        );
+        assert_eq!(
+            check_capture_controls(&mut initial, Duration::from_secs(2), || {
+                (control_profile(Some((9, 2))), "manual")
+            })
+            .unwrap_err(),
+            "Os controles da câmera mudaram durante a leitura. Tente novamente."
+        );
+        assert_eq!(initial.as_ref().unwrap().0, "fixed:8:2");
+    }
+
+    #[test]
+    fn automatic_white_balance_changes_preserve_the_relative_capture_profile() {
+        let mut initial = None;
+        assert!(
+            check_capture_controls(&mut initial, Duration::from_millis(500), || {
+                (control_profile(Some((5660, 1))), "auto")
+            })
+            .unwrap()
+        );
+        assert!(
+            check_capture_controls(&mut initial, Duration::from_secs(2), || {
+                (control_profile(Some((5880, 1))), "auto")
+            })
+            .unwrap()
+        );
+        assert_eq!(initial.as_ref().unwrap().0, "auto:1");
     }
 
     #[test]

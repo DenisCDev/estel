@@ -67,6 +67,13 @@ pub fn publish_stopped(restored: bool) {
     });
 }
 
+pub fn publish_stopping() {
+    publish(HardwareReport {
+        pid: std::process::id(),
+        status: Err("Encerramento solicitado. Aguarde a restauração das telas antes de abrir o Estel novamente.".into()),
+    });
+}
+
 fn publish(report: HardwareReport) {
     let result = serde_json::to_vec(&report)
         .map_err(std::io::Error::other)

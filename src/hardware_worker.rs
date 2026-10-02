@@ -12,7 +12,9 @@ use windows::Win32::System::Com::{COINIT_MULTITHREADED, CoInitializeEx, CoUninit
 
 use crate::{brightness, display, display_topology, runtime::WakeSignal, session, target::Target};
 
-const DRIVER_DEADLINE: Duration = Duration::from_secs(4);
+// Discovery took 4.78 s across two SDR monitors. Any request can rediscover
+// changed hardware, so the same bounded budget must cover that path too.
+const DRIVER_DEADLINE: Duration = Duration::from_secs(12);
 const MAX_MESSAGE: u64 = 128 * 1024;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -286,9 +288,12 @@ impl DriverProcess {
         serde_json::to_writer(&mut self.input, request)?;
         self.input.write_all(b"\n")?;
         self.input.flush()?;
-        self.replies
-            .recv_timeout(DRIVER_DEADLINE)
-            .map_err(|_| anyhow::anyhow!("o driver excedeu o prazo de 4 segundos"))?
+        self.replies.recv_timeout(DRIVER_DEADLINE).map_err(|_| {
+            anyhow::anyhow!(
+                "o driver excedeu o prazo de {} segundos",
+                DRIVER_DEADLINE.as_secs()
+            )
+        })?
     }
 }
 
@@ -542,9 +547,10 @@ mod tests {
                 pending = supervisor.changed.wait(pending).unwrap();
             }
             drop(pending);
-            // Both operations fit their individual deadlines, but not five seconds together.
-            std::thread::sleep(Duration::from_secs(3));
-            std::thread::sleep(Duration::from_secs(3));
+            // Discovery and restoration can each exceed the former 4 s budget.
+            // Together they also exceed the former 9 s shutdown allowance.
+            std::thread::sleep(Duration::from_secs(7));
+            std::thread::sleep(Duration::from_secs(7));
             done.send(true).unwrap();
         });
         let mut client = HardwareClient { shared, stopped };
