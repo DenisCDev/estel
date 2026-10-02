@@ -168,7 +168,7 @@ fn run() -> anyhow::Result<()> {
         let quit_event = CreateEventW(None, true, false, w!("Local\\EstelQuit"))?;
         let instance_mutex = CreateMutexW(None, false, w!("Local\\EstelSingleInstance"))?;
         if GetLastError() == ERROR_ALREADY_EXISTS {
-            if WaitForSingleObject(quit_event, 0) == WAIT_OBJECT_0 {
+            if notify_existing_instance(event, config_event, quit_event, instance_mutex)? {
                 let _ = MessageBoxW(
                     None,
                     w!(
@@ -177,8 +177,6 @@ fn run() -> anyhow::Result<()> {
                     w!("Estel"),
                     MB_OK | MB_ICONINFORMATION,
                 );
-            } else {
-                SetEvent(event)?;
             }
             tracing::info!("Estel já está em execução");
             return Ok(());
@@ -1332,6 +1330,25 @@ fn show_error(message: windows::core::PCWSTR) {
     }
 }
 
+fn notify_existing_instance(
+    settings_event: HANDLE,
+    config_event: HANDLE,
+    quit_event: HANDLE,
+    instance_mutex: HANDLE,
+) -> anyhow::Result<bool> {
+    use std::os::windows::io::{FromRawHandle, OwnedHandle};
+    // Release this instance's handles even on error, before any notice is shown.
+    let _handles = [settings_event, config_event, quit_event, instance_mutex]
+        .map(|handle| unsafe { OwnedHandle::from_raw_handle(handle.0) });
+    unsafe {
+        let closing = WaitForSingleObject(quit_event, 0) == WAIT_OBJECT_0;
+        if !closing {
+            SetEvent(settings_event)?;
+        }
+        Ok(closing)
+    }
+}
+
 fn persist(cfg: &mut Config, previous: &Config, config_event: HANDLE) -> bool {
     match cfg.save_changes(previous, &Config::config_path()) {
         Ok(_) => {
@@ -1482,6 +1499,34 @@ mod tests {
     use estel::Config;
     use estel::target::{NoiseColor, Target};
     use std::time::{Duration, Instant};
+
+    #[test]
+    fn reopening_notice_does_not_keep_the_previous_instance_alive() {
+        use std::os::windows::io::{FromRawHandle, OwnedHandle};
+        use windows::Win32::Foundation::{ERROR_ALREADY_EXISTS, GetLastError};
+        use windows::Win32::System::Threading::{CreateEventW, CreateMutexW};
+        use windows::core::HSTRING;
+
+        let name = HSTRING::from(format!("Local\\EstelReopenTest-{}", std::process::id()));
+        unsafe {
+            let host = CreateMutexW(None, false, &name).unwrap();
+            assert_ne!(GetLastError(), ERROR_ALREADY_EXISTS);
+            let host = OwnedHandle::from_raw_handle(host.0);
+            let duplicate = CreateMutexW(None, false, &name).unwrap();
+            assert_eq!(GetLastError(), ERROR_ALREADY_EXISTS);
+            let settings = CreateEventW(None, false, false, None).unwrap();
+            let config = CreateEventW(None, false, false, None).unwrap();
+            let quit = CreateEventW(None, true, true, None).unwrap();
+
+            assert!(super::notify_existing_instance(settings, config, quit, duplicate).unwrap());
+            drop(host);
+
+            let replacement = CreateMutexW(None, false, &name).unwrap();
+            let previous_still_exists = GetLastError() == ERROR_ALREADY_EXISTS;
+            let _replacement = OwnedHandle::from_raw_handle(replacement.0);
+            assert!(!previous_still_exists);
+        }
+    }
 
     #[test]
     fn rejected_camera_reading_immediately_returns_to_schedule() {
