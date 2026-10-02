@@ -49,7 +49,7 @@ Name: "{autoprograms}\Estel"; Filename: "{app}\estel.exe"; Parameters: "--settin
 Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "Estel"; ValueData: """{app}\estel.exe"""; Flags: uninsdeletevalue; Check: EnableAutostart
 
 [Run]
-Filename: "{app}\estel.exe"; Parameters: "--settings"; Description: "Abrir Estel"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\estel.exe"; Parameters: "--settings"; Description: "Configurar e abrir Estel (localização, janela e câmera opcionais)"; Flags: nowait postinstall skipifsilent
 
 [Code]
 var

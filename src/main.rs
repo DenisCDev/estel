@@ -279,7 +279,7 @@ fn run() -> anyhow::Result<()> {
     ambient_cfg_tx.send(ambient::AmbientCommand::Suspended(!activity.available()))?;
     let (weather_cfg_tx, weather_rx) = start_weather(cfg.clone(), wake.clone());
     let settings_open = Arc::new(AtomicU32::new(0));
-    if open_settings_on_start {
+    if open_settings_on_start || !cfg.setup_completed {
         open_settings(
             cfg.clone(),
             cfg_tx.clone(),
@@ -392,7 +392,9 @@ fn run() -> anyhow::Result<()> {
             );
         }
 
-        if cfg.preserve_colors() {
+        if !cfg.setup_completed {
+            tray.set_ambient_status("Luz ambiente: conclua a configuração inicial");
+        } else if cfg.preserve_colors() {
             tray.set_ambient_status("Luz ambiente: pausada para preservar cores");
         } else if cfg.ambient_enabled && ambient_source == Some(ambient::AmbientSource::LightSensor)
         {
@@ -472,7 +474,9 @@ fn run() -> anyhow::Result<()> {
             last_display_cct = Some((target.cct_kelvin, now));
         }
 
-        if cfg.preserve_colors() {
+        if !cfg.setup_completed {
+            tray.set_tooltip("Estel · conclua a configuração inicial");
+        } else if cfg.preserve_colors() {
             tray.set_tooltip("Estel · cores preservadas");
         } else if paused && !preview {
             tray.set_tooltip("Estel · pausada");
@@ -974,6 +978,7 @@ fn display_requested(
     now: Instant,
 ) -> bool {
     screen_available
+        && cfg.setup_completed
         && cfg.display_enabled
         && !cfg.preserve_colors()
         && (!paused || preview.is_some_and(|until| now < until))
@@ -1279,7 +1284,7 @@ fn requested_audio_target(
     paused: bool,
     preview: bool,
 ) -> Option<(NoiseColor, f32)> {
-    if paused || !cfg.noise_enabled || cfg.max_volume <= 0.0 {
+    if !cfg.setup_completed || paused || !cfg.noise_enabled || cfg.max_volume <= 0.0 {
         return None;
     }
     let gain = if preview { 1.0 } else { target.noise_gain };
@@ -1639,6 +1644,31 @@ mod tests {
             requested_audio_target(&target, &cfg, false, false),
             Some((NoiseColor::Pink, 0.5))
         );
+    }
+
+    #[test]
+    fn incomplete_setup_cannot_apply_display_or_audio_even_in_preview() {
+        let cfg = Config {
+            setup_completed: false,
+            display_enabled: true,
+            noise_enabled: true,
+            ..Config::default()
+        };
+        let now = Instant::now();
+        assert!(!display_requested(&cfg, true, false, None, now));
+        assert!(!display_requested(
+            &cfg,
+            true,
+            true,
+            Some(now + Duration::from_secs(60)),
+            now
+        ));
+        let target = Target {
+            noise: Some(NoiseColor::Pink),
+            noise_gain: 0.5,
+            ..Target::neutral()
+        };
+        assert!(requested_audio_target(&target, &cfg, false, true).is_none());
     }
 
     #[test]
