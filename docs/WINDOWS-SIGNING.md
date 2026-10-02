@@ -33,10 +33,10 @@ try {
 } finally { $compiler.Dispose() }
 
 # Inno signed the source EXE; copy the portable executable only afterward.
-Copy-Item -LiteralPath target/release/estel.exe -Destination artifacts/estel.exe
+Copy-Item -LiteralPath target/release/estel.exe -Destination artifacts/estel-portable-x86_64.exe
 ./scripts/Test-EstelSignatures.ps1 -SignToolPath $signTool `
     -ExpectedSignerThumbprint $certificateThumbprint `
-    -Path artifacts/estel.exe, artifacts/Estel-Setup-x86_64.exe `
+    -Path artifacts/estel-portable-x86_64.exe, artifacts/Estel-Setup-x86_64.exe `
     -ChecksumPath artifacts/SHA256SUMS.txt
 ```
 

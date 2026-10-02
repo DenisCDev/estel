@@ -811,6 +811,8 @@ struct DisplayControl {
     retry: Option<Instant>,
     refresh_needed: bool,
     target_due: bool,
+    park_replied: bool,
+    failed: bool,
 }
 
 impl DisplayControl {
@@ -824,6 +826,8 @@ impl DisplayControl {
             retry: None,
             refresh_needed: false,
             target_due: true,
+            park_replied: false,
+            failed: false,
         }
     }
 
@@ -835,6 +839,10 @@ impl DisplayControl {
         self.park_attempts = u8::from(self.pending == Some(DisplayAction::Park));
         self.retry = Some(now);
         self.target_due = true;
+        if requested && self.failed {
+            self.refresh_needed = true;
+            self.failed = false;
+        }
         if !requested {
             self.restore_needed = !self.restored || self.pending.is_some();
         }
@@ -845,6 +853,7 @@ impl DisplayControl {
         self.retry = Some(now);
         self.target_due = true;
         self.refresh_needed = true;
+        self.failed = false;
         if !self.requested {
             self.restored = false;
             self.restore_needed = true;
@@ -857,7 +866,12 @@ impl DisplayControl {
             self.target_due |= requested;
             return None;
         }
-        let action = if self.restore_needed {
+        if requested && self.failed {
+            return None;
+        }
+        // A disconnected monitor can keep its recovery snapshot pending while
+        // the worker safely applies adjustments to the other outputs.
+        let action = if !self.park_replied || (!self.requested && self.restore_needed) {
             if self.park_attempts >= 3 || self.retry.is_some_and(|retry| retry > now) {
                 return None;
             }
@@ -883,11 +897,15 @@ impl DisplayControl {
             return false;
         };
         if action == DisplayAction::Park {
+            self.park_replied = true;
+            self.failed = !result
+                .as_ref()
+                .is_ok_and(|status| status.applied_target.is_none());
             self.restored = result
                 .as_ref()
                 .is_ok_and(|status| status.restored && status.applied_target.is_none());
             self.restore_needed = !self.restored;
-            self.retry = (!self.restored && self.park_attempts < 3)
+            self.retry = (!self.requested && !self.restored && self.park_attempts < 3)
                 .then(|| now + Duration::from_secs(5 * u64::from(self.park_attempts)));
             if self.restore_needed && self.park_attempts >= 3 {
                 tracing::warn!(
@@ -897,17 +915,22 @@ impl DisplayControl {
             return false;
         }
         if result.is_err() {
+            self.failed = true;
             self.restored = false;
             self.restore_needed = true;
-            self.park_attempts = 0;
-            self.retry = Some(now);
+            self.retry = (!self.requested).then_some(now);
             return false;
         }
-        self.requested && !self.restore_needed && !self.refresh_needed
+        self.failed = false;
+        self.requested && !self.refresh_needed
     }
 
     fn retry_at(&self) -> Option<Instant> {
-        if self.pending.is_none() && self.restore_needed && self.park_attempts < 3 {
+        if !self.requested
+            && self.pending.is_none()
+            && self.restore_needed
+            && self.park_attempts < 3
+        {
             self.retry
         } else {
             None
@@ -918,10 +941,10 @@ impl DisplayControl {
         if self.pending.is_some() {
             return false;
         }
-        if self.restore_needed {
+        if !self.requested && self.restore_needed {
             self.park_attempts < 3 && self.retry.is_none_or(|retry| retry <= now)
         } else {
-            self.requested && (self.target_due || self.refresh_needed)
+            self.requested && !self.failed && (self.target_due || self.refresh_needed)
         }
     }
 }
@@ -1711,7 +1734,7 @@ mod tests {
     }
 
     #[test]
-    fn pause_waits_for_target_reply_and_resume_waits_for_confirmed_restoration() {
+    fn pause_waits_for_target_reply_and_resume_waits_for_park_reply() {
         let now = Instant::now();
         let mut control = active_display(now);
         assert_eq!(control.next_action(true, now), Some(DisplayAction::Target));
@@ -1779,19 +1802,90 @@ mod tests {
             if !resume {
                 control.restart(at);
             }
-            assert_eq!(control.next_action(resume, at), Some(DisplayAction::Park));
-            control.restart(at);
+            let expected = if resume {
+                DisplayAction::Refresh
+            } else {
+                DisplayAction::Park
+            };
+            assert_eq!(control.next_action(resume, at), Some(expected));
             assert_eq!(control.next_action(resume, at), None);
-            control.observe(&Ok(hardware_status(true, None)), at);
-            assert!(control.restored);
+            control.observe(&Ok(hardware_status(!resume, None)), at);
             if resume {
-                assert_eq!(control.next_action(true, at), Some(DisplayAction::Refresh));
-                assert_eq!(control.next_action(true, at), None);
-                control.observe(&Ok(hardware_status(true, None)), at);
                 assert_eq!(control.next_action(true, at), Some(DisplayAction::Target));
             } else {
+                assert!(control.restored);
                 assert_eq!(control.next_action(false, at), None);
             }
         }
+    }
+
+    #[test]
+    fn partial_startup_recovery_allows_safe_outputs_and_their_overlay_to_continue() {
+        let now = Instant::now();
+        let mut control = DisplayControl::new();
+        assert_eq!(control.next_action(true, now), Some(DisplayAction::Park));
+        let mut partial = hardware_status(false, None);
+        partial.recovery_warning =
+            Some("Uma tela desconectada ainda precisa ser restaurada.".into());
+        assert!(!control.observe(&Ok(partial), now));
+        assert!(!control.restored);
+        assert!(control.followup_ready(now));
+        assert_eq!(control.retry_at(), None);
+        assert_eq!(control.next_action(true, now), Some(DisplayAction::Target));
+        assert_eq!(control.next_action(true, now), None);
+        assert!(control.observe(&Ok(hardware_status(false, Some(Target::neutral()))), now));
+    }
+
+    #[test]
+    fn resume_during_park_waits_for_reply_but_not_for_a_disconnected_monitor() {
+        let now = Instant::now();
+        let mut control = active_display(now);
+        assert_eq!(control.next_action(false, now), Some(DisplayAction::Park));
+        assert_eq!(control.next_action(true, now), None);
+        assert!(!control.observe(&Ok(hardware_status(false, None)), now));
+        assert!(!control.restored);
+        assert_eq!(control.next_action(true, now), Some(DisplayAction::Target));
+        assert!(control.observe(&Ok(hardware_status(false, Some(Target::neutral()))), now));
+    }
+
+    #[test]
+    fn disconnected_monitor_does_not_restart_exhausted_paused_retry_cycles() {
+        let now = Instant::now();
+        let mut control = DisplayControl::new();
+        for seconds in [0, 5, 15] {
+            let at = now + Duration::from_secs(seconds);
+            assert_eq!(control.next_action(false, at), Some(DisplayAction::Park));
+            control.observe(&Ok(hardware_status(false, None)), at);
+        }
+        for seconds in [16, 30, 120, 3600] {
+            let at = now + Duration::from_secs(seconds);
+            assert_eq!(control.next_action(false, at), None);
+            assert!(!control.followup_ready(at));
+        }
+        assert_eq!(
+            control.next_action(true, now + Duration::from_secs(3601)),
+            Some(DisplayAction::Target)
+        );
+    }
+
+    #[test]
+    fn failed_worker_requires_explicit_refresh_before_any_new_target() {
+        let now = Instant::now();
+        let mut control = DisplayControl::new();
+        assert_eq!(control.next_action(true, now), Some(DisplayAction::Park));
+        control.observe(&Err("worker indisponível".into()), now);
+        assert!(!control.followup_ready(now + Duration::from_secs(60)));
+        assert_eq!(
+            control.next_action(true, now + Duration::from_secs(60)),
+            None
+        );
+        control.restart(now);
+        assert_eq!(control.next_action(true, now), Some(DisplayAction::Refresh));
+        control.observe(&Err("worker indisponível".into()), now);
+        assert_eq!(control.next_action(true, now), None);
+        control.restart(now);
+        assert_eq!(control.next_action(true, now), Some(DisplayAction::Refresh));
+        control.observe(&Ok(hardware_status(false, None)), now);
+        assert_eq!(control.next_action(true, now), Some(DisplayAction::Target));
     }
 }

@@ -64,7 +64,7 @@ pub fn wait_for_work(handles: &[HANDLE], timeout: Duration) -> windows::core::Re
         )
     };
     if result == windows::Win32::Foundation::WAIT_FAILED {
-        return Err(windows::core::Error::from_win32());
+        return Err(windows::core::Error::from_thread());
     }
     Ok(result.0 as usize)
 }
@@ -135,7 +135,7 @@ impl ActivityMonitor {
             ..Default::default()
         };
         if unsafe { RegisterClassW(&class) } == 0 {
-            return Err(windows::core::Error::from_win32().into());
+            return Err(windows::core::Error::from_thread().into());
         }
         let hwnd = unsafe {
             CreateWindowExW(

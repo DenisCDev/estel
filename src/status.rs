@@ -153,7 +153,7 @@ impl UiUpdates {
                 let result = unsafe { WaitForMultipleObjects(&handles, false, INFINITE) };
                 if result == WAIT_OBJECT_0 { break; }
                 if result == WAIT_FAILED {
-                    tracing::warn!(error = %windows::core::Error::from_win32(), "avisos do painel indisponíveis");
+                        tracing::warn!(error = %windows::core::Error::from_thread(), "avisos do painel indisponíveis");
                     let _ = error_tx.send("A atualização automática das informações parou. Use Atualizar informações ou reabra o painel.".into());
                     context.request_repaint();
                     break;
