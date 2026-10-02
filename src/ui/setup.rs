@@ -184,6 +184,7 @@ impl SettingsApp {
         }
         if self.cfg.window_near {
             ui.label("Abra a bússola do celular e aponte o topo do aparelho do interior do cômodo para fora da janela. Leia a direção em graus, longe de ímãs e objetos metálicos. É uma referência aproximada, não a sua localização geográfica.");
+            ui.label("Se a bússola oferecer a opção, use o norte verdadeiro (geográfico), a referência usada para estimar a posição do sol.");
             ui.label("Norte: 0° · Leste: 90° · Sul: 180° · Oeste: 270°. Se não souber, deixe a direção indefinida.");
             let mut known = self.cfg.window_azimuth_deg.is_some();
             if ui.checkbox(&mut known, "Sei a direção da janela").changed() {

@@ -1366,7 +1366,7 @@ impl eframe::App for SettingsApp {
                                 if ui.selectable_value(&mut self.cfg.screen_window_relation, relation, label).changed() { self.touch(); }
                             }
                         });
-                    ui.label(RichText::new("Use a bússola do celular para saber a direção da janela. A estimativa é aproximada; a luz ambiente, se ativada, tem prioridade e o clima fica de reserva.").size(12.0).color(MUTED));
+                    ui.label(RichText::new("Use a bússola do celular para saber a direção da janela. Se houver a opção, use norte verdadeiro (geográfico), a referência da posição do sol. A estimativa é aproximada; a luz ambiente, se ativada, tem prioridade e o clima fica de reserva.").size(12.0).color(MUTED));
                 }
                 });
 

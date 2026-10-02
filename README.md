@@ -55,7 +55,8 @@ para o ajuste automático.
 
 Para a direção da janela, use a bússola do celular: aponte o topo do aparelho do
 interior do cômodo para fora da janela e leia os graus, longe de ímãs e objetos
-metálicos. Norte é 0°, leste 90°, sul 180° e oeste 270°. É uma estimativa da
+metálicos. Se houver essa opção na bússola, use norte verdadeiro (geográfico),
+a referência da posição do sol. Norte é 0°, leste 90°, sul 180° e oeste 270°. É uma estimativa da
 orientação da janela, não das coordenadas da cidade; deixar a direção indefinida
 também é válido. O guia explica a posição da janela em relação à tela.
 
