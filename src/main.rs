@@ -780,6 +780,9 @@ fn run() -> anyhow::Result<()> {
     }
 
     overlay::hide(overlay_hwnd);
+    drop(audio);
+    estel::status::publish_stopping();
+    drop(tray);
     let restored = hardware.shutdown();
     estel::status::publish_stopped(restored);
     if restored {

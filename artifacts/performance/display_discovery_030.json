@@ -1,0 +1,33 @@
+{
+  "tested_commit": "9de851862d2e597ce69c7f72fa01eee593718412",
+  "binary_sha256": "3b1780fc9fead8cd89698f1cc3aabf47163b2072fb3209023f43488f35a32071",
+  "test": "read_only_display_discovery",
+  "default_deadline_probe": {
+    "exit_code": 1,
+    "error": "Error: o driver excedeu o prazo de 4 segundos",
+    "duration_seconds": 4.5963774
+  },
+  "isolated_extended_probe": {
+    "exit_code": 0,
+    "external_deadline_seconds": 20,
+    "timed_out": false,
+    "duration_seconds": 4.7778166
+  },
+  "outputs": [
+    {
+      "label": "SFP2412FHD",
+      "color_mode": "Sdr",
+      "internal": false,
+      "brightness_method": "DDC/CI",
+      "technology": null
+    },
+    {
+      "label": "PMU21-IPS-01",
+      "color_mode": "Sdr",
+      "internal": false,
+      "brightness_method": "DDC/CI",
+      "technology": "LCD TFT"
+    }
+  ],
+  "limitations": "Diagnóstico somente leitura; não restaurou nem alterou gamma ou brilho. Identidades e caminhos de dispositivo foram omitidos."
+}
