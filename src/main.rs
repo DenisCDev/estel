@@ -10,11 +10,11 @@ use std::time::{Duration, Instant};
 use chrono::{Local, NaiveDate, Timelike};
 use windows::Win32::Foundation::{ERROR_ALREADY_EXISTS, GetLastError, HANDLE, WAIT_OBJECT_0};
 use windows::Win32::System::Threading::{
-    CreateEventW, CreateMutexW, SetEvent, WaitForSingleObject,
+    CreateEventW, CreateMutexW, ResetEvent, SetEvent, WaitForSingleObject,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    FindWindowExW, GetWindowThreadProcessId, MB_ICONERROR, MB_OK, MessageBoxW, SW_RESTORE,
-    SetForegroundWindow, ShowWindow,
+    FindWindowExW, GetWindowThreadProcessId, MB_ICONERROR, MB_ICONINFORMATION, MB_OK, MessageBoxW,
+    SW_RESTORE, SetForegroundWindow, ShowWindow,
 };
 use windows::core::w;
 
@@ -165,13 +165,26 @@ fn run() -> anyhow::Result<()> {
     let (settings_event, config_event, quit_event, _instance_mutex) = unsafe {
         let event = CreateEventW(None, false, false, w!("Local\\EstelOpenSettings"))?;
         let config_event = CreateEventW(None, false, false, w!("Local\\EstelConfigChanged"))?;
+        let quit_event = CreateEventW(None, true, false, w!("Local\\EstelQuit"))?;
         let instance_mutex = CreateMutexW(None, false, w!("Local\\EstelSingleInstance"))?;
         if GetLastError() == ERROR_ALREADY_EXISTS {
-            SetEvent(event)?;
+            if WaitForSingleObject(quit_event, 0) == WAIT_OBJECT_0 {
+                let _ = MessageBoxW(
+                    None,
+                    w!(
+                        "O Estel está encerrando e restaurando as telas. Aguarde alguns segundos e abra novamente."
+                    ),
+                    w!("Estel"),
+                    MB_OK | MB_ICONINFORMATION,
+                );
+            } else {
+                SetEvent(event)?;
+            }
             tracing::info!("Estel já está em execução");
             return Ok(());
         }
-        let quit_event = CreateEventW(None, false, false, w!("Local\\EstelQuit"))?;
+        // A reopening process can still hold the previous host's event handle.
+        ResetEvent(quit_event)?;
         (event, config_event, quit_event, instance_mutex)
     };
 
@@ -780,6 +793,9 @@ fn run() -> anyhow::Result<()> {
     }
 
     overlay::hide(overlay_hwnd);
+    if let Err(error) = unsafe { SetEvent(quit_event) } {
+        tracing::warn!(%error, "não foi possível sinalizar o encerramento");
+    }
     drop(audio);
     estel::status::publish_stopping();
     drop(tray);
