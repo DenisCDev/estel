@@ -448,7 +448,7 @@ fn run() -> anyhow::Result<()> {
             .brightness
             .clamp(cfg.min_brightness, brightness_ceiling);
 
-        if cfg.preserve_colors() || !cfg.display_enabled || (paused && !preview) || preview {
+        if cfg.preserve_colors() || !cfg.display_enabled || paused || preview {
             last_display_brightness = None;
             last_display_cct = None;
         } else {
