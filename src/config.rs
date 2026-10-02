@@ -65,6 +65,9 @@ pub enum SupportCountry {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
+    /// Existing preferences remain active; newly created files open the setup guide.
+    #[serde(default = "completed_setup")]
+    pub setup_completed: bool,
     /// Latitude/longitude for sunrise/sunset. Default: São Paulo.
     pub latitude: f64,
     pub longitude: f64,
@@ -186,6 +189,7 @@ fn finite_clamp(value: f32, fallback: f32, min: f32, max: f32) -> f32 {
 impl Default for Config {
     fn default() -> Self {
         Config {
+            setup_completed: true,
             latitude: -23.5505,
             longitude: -46.6333,
             location_auto: true,
@@ -356,7 +360,11 @@ impl Config {
                 if path.with_extension("toml.bak").exists() {
                     return Self::recover_backup(path, None);
                 }
-                let mut cfg = Config::default();
+                let mut cfg = Config {
+                    setup_completed: false,
+                    location_auto: false,
+                    ..Config::default()
+                };
                 cfg.sanitize();
                 cfg.save_unlocked(path)?;
                 Ok(cfg)
@@ -519,6 +527,10 @@ impl Config {
     pub fn bed_min(&self) -> f64 {
         parse_hhmm(&self.bed)
     }
+}
+
+fn completed_setup() -> bool {
+    true
 }
 
 fn parse_config(text: &str) -> io::Result<Config> {
@@ -973,6 +985,33 @@ noise = "pink"
         assert!(Config::default().location_auto);
         assert!(!config.weather_enabled);
         assert_eq!(config.support_country, SupportCountry::Brazil);
+    }
+
+    #[test]
+    fn fresh_install_waits_for_setup_without_requesting_location_or_camera() {
+        let directory = ConfigDirectory::new();
+        let config = Config::load_from(&directory.config()).unwrap();
+        assert!(!config.setup_completed);
+        assert!(!config.location_auto);
+        assert!(!config.ambient_enabled);
+        assert!(
+            !Config::load_from(&directory.config())
+                .unwrap()
+                .setup_completed
+        );
+    }
+
+    #[test]
+    fn upgrade_preserves_existing_preferences_without_repeating_setup() {
+        let text = toml::to_string(&Config::default()).unwrap();
+        let legacy = text
+            .lines()
+            .filter(|line| !line.starts_with("setup_completed ="))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let config: Config = toml::from_str(&legacy).unwrap();
+        assert!(config.setup_completed);
+        assert!(config.location_auto);
     }
 
     #[test]

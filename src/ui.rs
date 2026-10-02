@@ -24,6 +24,8 @@ use crate::status::UiUpdates;
 use crate::update::{self, DownloadedInstaller, Release};
 use crate::weather::{self, Place};
 
+mod setup;
+
 const PAPER: Color32 = Color32::from_rgb(255, 250, 238);
 const INK: Color32 = Color32::from_rgb(32, 49, 55);
 const MUTED: Color32 = Color32::from_rgb(73, 85, 88);
@@ -174,6 +176,7 @@ impl From<&Config> for WeatherStatusKey {
 }
 
 struct SettingsApp {
+    setup_step: Option<usize>,
     cfg: Config,
     saved_cfg: Config,
     tx: Sender<Config>,
@@ -226,7 +229,8 @@ impl SettingsApp {
         poster_collage: egui::TextureHandle,
         ui_updates: anyhow::Result<UiUpdates>,
     ) -> Self {
-        let location_request = cfg.location_auto;
+        let setup_step = (!cfg.setup_completed).then_some(0);
+        let location_request = cfg.location_auto && setup_step.is_none();
         let (wake_h, wake_m) = split_hhmm(&cfg.wake);
         let (bed_h, bed_m) = split_hhmm(&cfg.bed);
         let (camera_tx, camera_scan) = mpsc::channel();
@@ -242,6 +246,7 @@ impl SettingsApp {
             }
         };
         SettingsApp {
+            setup_step,
             saved_cfg: cfg.clone(),
             weather_status: weather::status_label(&cfg),
             weather_status_key: WeatherStatusKey::from(&cfg),
@@ -1060,6 +1065,10 @@ impl eframe::App for SettingsApp {
                 }
             });
 
+        if self.setup_panel(ctx) {
+            return;
+        }
+
         egui::CentralPanel::default()
             .frame(Frame::new().fill(PAPER).inner_margin(Margin::same(25)))
             .show(ctx, |ui| {
@@ -1068,6 +1077,11 @@ impl eframe::App for SettingsApp {
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
                 ui.set_width(content_width);
+                if ui.button("CONFIGURAÇÃO GUIADA · LOCAL, JANELA E CÂMERA").clicked() {
+                    self.setup_step = Some(0);
+                    self.location_request = false;
+                    ctx.request_repaint();
+                }
                 let sticker_sheet = self.mascot_sheet.clone();
                 if poster_cover(ui, &self.poster_collage, &mut self.cfg, content_width) {
                     self.touch();
@@ -1352,7 +1366,7 @@ impl eframe::App for SettingsApp {
                                 if ui.selectable_value(&mut self.cfg.screen_window_relation, relation, label).changed() { self.touch(); }
                             }
                         });
-                    ui.label(RichText::new("Use a bússola do celular para saber a direção da janela. A estimativa é aproximada; a luz ambiente, se ativada, tem prioridade e o clima fica de reserva.").size(12.0).color(MUTED));
+                    ui.label(RichText::new("Use a bússola do celular para saber a direção da janela. Se houver a opção, use norte verdadeiro (geográfico), a referência da posição do sol. A estimativa é aproximada; a luz ambiente, se ativada, tem prioridade e o clima fica de reserva.").size(12.0).color(MUTED));
                 }
                 });
 
@@ -1744,6 +1758,7 @@ mod tests {
         let (tx, _) = mpsc::channel();
         let (_, camera_scan) = mpsc::channel();
         SettingsApp {
+            setup_step: None,
             saved_cfg: cfg.clone(),
             cfg,
             tx,

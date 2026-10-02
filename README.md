@@ -42,8 +42,28 @@ Não precisa instalar Git, Rust nem abrir o terminal.
 
 1. [Baixe o instalador do Estel para Windows](https://github.com/DenisCDev/estel/releases/latest/download/Estel-Setup-x86_64.exe).
 2. Abra `Estel-Setup-x86_64.exe` e avance pelo instalador.
-3. No fim, deixe **Abrir Estel** marcado. As configurações abrem e o ícone fica
+3. No fim, deixe **Configurar e abrir Estel** marcado. As configurações abrem e o ícone fica
    ao lado do relógio ou dentro da seta **Mostrar ícones ocultos**.
+
+A partir da versão 0.3.1, uma instalação nova abre um guia com localização,
+janela, câmera ou sensor de luz, rotina e limites de brilho. Os ajustes de tela e
+som aguardam a conclusão do guia. Localização do Windows e luz ambiente são
+opcionais; você pode usar coordenadas, buscar uma cidade ou manter a referência
+inicial de São Paulo e revisar depois. A câmera só captura quando você escolhe
+usar luz ambiente e solicita referências, ou quando já há referências válidas
+para o ajuste automático.
+
+Para a direção da janela, use a bússola do celular: aponte o topo do aparelho do
+interior do cômodo para fora da janela e leia os graus, longe de ímãs e objetos
+metálicos. Se houver essa opção na bússola, use norte verdadeiro (geográfico),
+a referência da posição do sol. Norte é 0°, leste 90°, sul 180° e oeste 270°. É uma estimativa da
+orientação da janela, não das coordenadas da cidade; deixar a direção indefinida
+também é válido. O guia explica a posição da janela em relação à tela.
+
+Atualizações mantêm as preferências existentes. Para repetir as perguntas,
+abra o painel e selecione **Configuração guiada · local, janela e câmera**.
+Se fechar antes de concluir uma configuração nova, suas escolhas ficam salvas
+e o guia reaparece na próxima abertura.
 
 O instalador funciona por usuário, sem pedir senha de administrador. Ele cria um
 atalho no menu Iniciar e ativa **Iniciar com o Windows** na primeira instalação;
@@ -223,8 +243,9 @@ O protocolo de medição e seus limites estão em [desempenho no Windows](docs/W
 
 ### Localização, clima e orientação (Windows)
 
-Na primeira instalação, a janela de configurações solicita a localização ao
-Windows. Se o acesso for negado, busque cidade ou bairro pelo botão **Buscar**,
+Na primeira instalação, o guia oferece a localização do Windows como opção;
+a solicitação só começa quando você a ativa. Se preferir ou se o acesso for
+negado, busque cidade ou bairro pelo botão **Buscar**,
 escolha o resultado e confira o ponto no mapa. A busca é feita pelo serviço de
 geocodificação do [Open-Meteo](https://open-meteo.com/en/docs/geocoding-api),
 com dados do GeoNames. Bairros sem cadastro podem não aparecer; nesse caso,
