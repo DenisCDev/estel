@@ -64,10 +64,32 @@ public static class EstelTestWindows {
 }
 '@
 
-$runKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
-$approvedKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run'
-$originalRun = Get-ItemPropertyValue -LiteralPath $runKey -Name Estel -ErrorAction SilentlyContinue
-$originalApproval = Get-ItemPropertyValue -LiteralPath $approvedKey -Name Estel -ErrorAction SilentlyContinue
+function Read-RegistryValue {
+    param([string]$SubKey)
+    $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($SubKey)
+    if ($null -eq $key) { return $null }
+    try { ,$key.GetValue('Estel', $null, [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames) }
+    finally { $key.Dispose() }
+}
+
+function Restore-RegistryValue {
+    param([string]$SubKey, [object]$Value)
+    $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($SubKey, $true)
+    if ($null -eq $key) {
+        if ($null -eq $Value) { return }
+        $key = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey($SubKey)
+    }
+    try {
+        if ($null -eq $Value) { $key.DeleteValue('Estel', $false) }
+        elseif ($Value -is [byte[]]) { $key.SetValue('Estel', $Value, [Microsoft.Win32.RegistryValueKind]::Binary) }
+        else { $key.SetValue('Estel', $Value, [Microsoft.Win32.RegistryValueKind]::String) }
+    } finally { $key.Dispose() }
+}
+
+$runKey = 'Software\Microsoft\Windows\CurrentVersion\Run'
+$approvedKey = 'Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run'
+$originalRun = Read-RegistryValue $runKey
+$originalApproval = Read-RegistryValue $approvedKey
 $originalAppData = $env:APPDATA
 $originalRustLog = $env:RUST_LOG
 $testRoot = Join-Path ([IO.Path]::GetTempPath()) ('estel-runtime-' + [guid]::NewGuid().ToString('N'))
@@ -179,9 +201,7 @@ try {
     } finally {
         $env:APPDATA = $originalAppData
         $env:RUST_LOG = $originalRustLog
-        if ($null -ne $originalRun) { Set-ItemProperty -LiteralPath $runKey -Name Estel -Value $originalRun }
-        else { Remove-ItemProperty -LiteralPath $runKey -Name Estel -ErrorAction SilentlyContinue }
-        if ($null -ne $originalApproval) { Set-ItemProperty -LiteralPath $approvedKey -Name Estel -Value $originalApproval }
-        else { Remove-ItemProperty -LiteralPath $approvedKey -Name Estel -ErrorAction SilentlyContinue }
+        Restore-RegistryValue $runKey $originalRun
+        Restore-RegistryValue $approvedKey $originalApproval
     }
 }
