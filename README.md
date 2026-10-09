@@ -95,6 +95,24 @@ Alterações pelo painel e pela bandeja preservam os campos que você não edito
 A preferência de iniciar com o Windows também fica salva para reparar um
 registro removido ou com caminho antigo na próxima abertura do aplicativo.
 
+No Windows 0.3.2, um processo separado acompanha a inicialização e a execução
+do Estel. A inicialização tem prazo de 45 segundos; se o processo principal
+falhar, tenta reabri-lo até três vezes, com espera crescente. **Fechar Estel**,
+encerrar a sessão e o comando `--quit` encerram normalmente, sem reiniciar.
+Falhas do painel ou de sensores opcionais não fecham o aplicativo principal.
+O registro do instalador inclui `--startup`, como o registro feito pelo aplicativo.
+
+Os diagnósticos ficam na pasta de configuração: `launcher.log` registra as
+tentativas de abertura, `estel.log` registra o processo principal e os demais
+processos têm logs separados (`settings.log`, `display.log`, `camera.log`,
+`light-sensor.log` e `diagnostics.log`). Cada arquivo guarda até 2 MiB e um backup
+`.log.1`, incluindo falhas anteriores à criação da bandeja. Se as tentativas de
+recuperação se esgotarem, uma mensagem orienta como encontrar os registros.
+O início automático depende de o Windows executar o registro ao entrar na
+sessão; ele pode adiar essa execução. A recuperação começa quando o iniciador
+é executado, e não substitui bloqueios de segurança ou uma opção de início
+automático desativada no Windows.
+
 ### Atualizar ou remover
 
 O Estel verifica se há uma versão publicada mais recente ao iniciar e mostra o

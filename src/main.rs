@@ -33,9 +33,15 @@ use estel::weather::{self, Weather, WeatherPhase};
 const SETTINGS_STARTING: u32 = 1;
 
 fn main() -> anyhow::Result<()> {
-    let result = run();
+    estel::logging::init();
+    let helper = estel::launcher::is_helper();
+    let result = if helper {
+        run()
+    } else {
+        estel::launcher::run()
+    };
     if let Err(error) = &result {
-        tracing::error!(%error, "Estel não conseguiu iniciar");
+        tracing::error!(%error, "processo do Estel terminou com erro");
         if !std::env::args_os().any(|arg| {
             arg == "--list-cameras"
                 || arg == "--list-camera-devices"
@@ -45,9 +51,11 @@ fn main() -> anyhow::Result<()> {
                 || arg == "--display-diagnostics"
                 || arg == "--sample-light-sensor"
                 || arg == "--quit"
+                || arg == "--host"
+                || arg == "--settings-window"
         }) {
             show_error(w!(
-                "O Estel não conseguiu iniciar. Suas configurações foram preservadas. Confira estel.log na pasta de configuração e tente abrir novamente."
+                "O Estel não conseguiu continuar. Suas configurações foram preservadas. Abra a pasta %APPDATA%\\condado\\estel\\config pelo Explorador de Arquivos e confira launcher.log e estel.log. Depois, tente abrir o Estel novamente."
             ));
         }
     }
@@ -55,7 +63,6 @@ fn main() -> anyhow::Result<()> {
 }
 
 fn run() -> anyhow::Result<()> {
-    init_log();
     if std::env::args_os().any(|arg| arg == "--display-worker") {
         return estel::hardware_worker::run_stdio();
     }
@@ -136,6 +143,9 @@ fn run() -> anyhow::Result<()> {
         return Ok(());
     }
     if std::env::args_os().any(|arg| arg == "--settings-window") {
+        let Some(_instance) = estel::launcher::settings_instance()? else {
+            return Ok(());
+        };
         let (tx, _rx) = mpsc::channel();
         return estel::ui::run(Config::load_or_default()?, tx)
             .map_err(|error| anyhow::anyhow!(error.to_string()));
@@ -168,6 +178,12 @@ fn run() -> anyhow::Result<()> {
         let quit_event = CreateEventW(None, true, false, w!("Local\\EstelQuit"))?;
         let instance_mutex = CreateMutexW(None, false, w!("Local\\EstelSingleInstance"))?;
         if GetLastError() == ERROR_ALREADY_EXISTS {
+            if std::env::args_os().any(|arg| arg == "--startup") {
+                use std::os::windows::io::{FromRawHandle, OwnedHandle};
+                let _handles = [event, config_event, quit_event, instance_mutex]
+                    .map(|handle| OwnedHandle::from_raw_handle(handle.0));
+                return Ok(());
+            }
             if notify_existing_instance(event, config_event, quit_event, instance_mutex)? {
                 let _ = MessageBoxW(
                     None,
@@ -181,8 +197,10 @@ fn run() -> anyhow::Result<()> {
             tracing::info!("Estel já está em execução");
             return Ok(());
         }
-        // A reopening process can still hold the previous host's event handle.
-        ResetEvent(quit_event)?;
+        // A supervised host must preserve a quit issued while it was starting.
+        if !prepare_host_quit(quit_event, std::env::var_os("ESTEL_LAUNCHER_PID").is_some())? {
+            return Ok(());
+        }
         (event, config_event, quit_event, instance_mutex)
     };
 
@@ -262,14 +280,18 @@ fn run() -> anyhow::Result<()> {
     );
 
     let running = Arc::new(AtomicBool::new(true));
+    let critical_panic = Arc::new(AtomicBool::new(false));
+    let panic_failed = critical_panic.clone();
     let panic_running = running.clone();
     let panic_wake = wake.clone();
-    let orig_hook = std::panic::take_hook();
+    let log_panic = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
-        tracing::error!(panic = %info, "falha interna no Estel");
-        panic_running.store(false, Ordering::SeqCst);
-        panic_wake.notify();
-        orig_hook(info);
+        log_panic(info);
+        if std::thread::current().name() == Some("display-supervisor") {
+            panic_failed.store(true, Ordering::SeqCst);
+            panic_running.store(false, Ordering::SeqCst);
+            panic_wake.notify();
+        }
     }));
 
     let mut audio: Option<Audio> = None;
@@ -308,6 +330,7 @@ fn run() -> anyhow::Result<()> {
     let mut ambient_source = None;
     let mut last_display_brightness: Option<(f32, Instant)> = None;
     let mut last_display_cct: Option<(f32, Instant)> = None;
+    estel::launcher::notify_ready()?;
 
     while running.load(Ordering::SeqCst) {
         while let Some(result) = hardware.poll() {
@@ -795,7 +818,9 @@ fn run() -> anyhow::Result<()> {
     }
 
     overlay::hide(overlay_hwnd);
-    if let Err(error) = unsafe { SetEvent(quit_event) } {
+    if (!critical_panic.load(Ordering::SeqCst) || user_quit)
+        && let Err(error) = unsafe { SetEvent(quit_event) }
+    {
         tracing::warn!(%error, "não foi possível sinalizar o encerramento");
     }
     drop(audio);
@@ -813,6 +838,10 @@ fn run() -> anyhow::Result<()> {
             ));
         }
     }
+    anyhow::ensure!(
+        !critical_panic.load(Ordering::SeqCst),
+        "o controle de telas falhou"
+    );
     Ok(())
 }
 
@@ -1335,6 +1364,18 @@ fn show_error(message: windows::core::PCWSTR) {
     }
 }
 
+fn prepare_host_quit(event: HANDLE, supervised: bool) -> windows::core::Result<bool> {
+    if !supervised {
+        unsafe { ResetEvent(event)? };
+        return Ok(true);
+    }
+    match unsafe { WaitForSingleObject(event, 0) } {
+        WAIT_OBJECT_0 => Ok(false),
+        windows::Win32::Foundation::WAIT_TIMEOUT => Ok(true),
+        _ => Err(windows::core::Error::from_thread()),
+    }
+}
+
 fn notify_existing_instance(
     settings_event: HANDLE,
     config_event: HANDLE,
@@ -1406,7 +1447,6 @@ fn open_settings(_cfg: Config, tx: mpsc::Sender<Config>, state: Arc<AtomicU32>, 
             .and_then(|executable| {
                 std::process::Command::new(executable)
                     .arg("--settings-window")
-                    .env("ESTEL_UI_PARENT_PID", std::process::id().to_string())
                     .spawn()
             })
             .and_then(|mut child| {
@@ -1414,9 +1454,20 @@ fn open_settings(_cfg: Config, tx: mpsc::Sender<Config>, state: Arc<AtomicU32>, 
                 child.wait()
             });
         state.store(0, Ordering::SeqCst);
-        if let Err(error) = result {
-            tracing::error!("janela de configurações: {error}");
-            show_error(w!("Não foi possível abrir as configurações."));
+        match result {
+            Ok(status) if status.success() => {}
+            Ok(status) => {
+                tracing::error!(%status, "janela de configurações terminou com erro");
+                show_error(w!(
+                    "As configurações fecharam por uma falha. O Estel continua ativo. Abra o painel novamente para tentar de novo."
+                ));
+            }
+            Err(error) => {
+                tracing::error!(%error, "janela de configurações indisponível");
+                show_error(w!(
+                    "Não foi possível abrir as configurações. Abra o painel novamente para tentar de novo."
+                ));
+            }
         }
         match Config::load_or_default() {
             Ok(config) => {
@@ -1429,41 +1480,6 @@ fn open_settings(_cfg: Config, tx: mpsc::Sender<Config>, state: Arc<AtomicU32>, 
             }
         }
     });
-}
-
-fn init_log() {
-    let dir = Config::config_path()
-        .parent()
-        .map(|p| p.to_path_buf())
-        .unwrap_or_else(|| std::path::PathBuf::from("."));
-    let _ = std::fs::create_dir_all(&dir);
-    let log_path = dir.join("estel.log");
-    let file = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&log_path);
-
-    let env = tracing_subscriber::EnvFilter::from_default_env().add_directive(
-        "estel=info"
-            .parse()
-            .unwrap_or_else(|_| "info".parse().unwrap()),
-    );
-
-    match file {
-        Ok(f) => {
-            tracing_subscriber::fmt()
-                .with_writer(std::sync::Mutex::new(f))
-                .with_env_filter(env)
-                .init();
-        }
-        Err(error) => {
-            tracing_subscriber::fmt()
-                .with_writer(std::io::stderr)
-                .with_env_filter(env)
-                .init();
-            tracing::warn!(%error, "não foi possível abrir o arquivo de log");
-        }
-    }
 }
 
 fn solar_times(lat: f64, lon: f64, date: NaiveDate) -> (f64, f64) {
@@ -1494,6 +1510,20 @@ fn solar_times(lat: f64, lon: f64, date: NaiveDate) -> (f64, f64) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn supervised_start_preserves_a_quit_sent_before_host_initialization() {
+        use std::os::windows::io::{FromRawHandle, OwnedHandle};
+        use windows::Win32::Foundation::WAIT_OBJECT_0;
+        use windows::Win32::System::Threading::{CreateEventW, WaitForSingleObject};
+        unsafe {
+            let event = CreateEventW(None, true, true, None).unwrap();
+            let _owner = OwnedHandle::from_raw_handle(event.0);
+            assert!(!super::prepare_host_quit(event, true).unwrap());
+            assert_eq!(WaitForSingleObject(event, 0), WAIT_OBJECT_0);
+            assert!(super::prepare_host_quit(event, false).unwrap());
+            assert!(super::prepare_host_quit(event, true).unwrap());
+        }
+    }
     use super::{
         DisplayAction, DisplayControl, ambient_source_changed, ambient_status_text,
         ambient_worker_changed, apply_ambient_reading, brightness_controls_changed,

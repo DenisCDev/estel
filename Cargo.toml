@@ -1,6 +1,6 @@
 [package]
 name = "estel"
-version = "0.3.1"
+version = "0.3.2"
 edition = "2024"
 description = "Aplicativo para ajustar cor e brilho no Windows, com som ambiente opcional."
 license = "MIT"

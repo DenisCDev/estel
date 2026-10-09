@@ -52,6 +52,41 @@ jobs:
       - name: Build release
         run: cargo build --release --locked
 
+      - name: Prepare software rendering for desktop tests
+        timeout-minutes: 3
+        run: |
+          $archive = Join-Path $env:RUNNER_TEMP "mesa3d-26.2.4.7z"
+          Invoke-WebRequest -Uri "https://github.com/pal1000/mesa-dist-win/releases/download/26.2.4/mesa3d-26.2.4-release-msvc.7z" -OutFile $archive -TimeoutSec 120
+          $expected = "351fc8c8b695878ffb3eaa044b3ead08672a48b1a045e3c3e3975811df0f6695"
+          if ((Get-FileHash -LiteralPath $archive).Hash.ToLowerInvariant() -ne $expected) {
+            throw "O pacote de renderização do teste não corresponde ao SHA256 esperado."
+          }
+          New-Item -ItemType Directory -Force target/runtime-test | Out-Null
+          tar -xf $archive -C target/runtime-test x64/opengl32.dll x64/libgallium_wgl.dll
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Copy-Item target/runtime-test/x64/*.dll target/runtime-test
+          Copy-Item target/release/estel.exe target/runtime-test/estel.exe
+
+      - name: Test desktop recovery
+        env:
+          GALLIUM_DRIVER: llvmpipe
+        run: |
+          try {
+            ./scripts/Test-EstelRuntime.ps1 -Executable ./target/runtime-test/estel.exe
+          } finally {
+            New-Item -ItemType Directory -Force target/recovery-diagnostics | Out-Null
+            Get-ChildItem "$env:TEMP/estel-runtime-*/condado/estel/config/*.log*" -ErrorAction SilentlyContinue |
+              Copy-Item -Destination target/recovery-diagnostics
+          }
+
+      - name: Upload recovery diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: recovery-diagnostics
+          path: target/recovery-diagnostics/*
+          if-no-files-found: ignore
+
       - name: Install Inno Setup
         shell: powershell
         run: choco install innosetup --no-progress --yes
@@ -105,7 +140,7 @@ jobs:
             throw "O instalador não criou estel.exe"
           }
           $autostart = (Get-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run").Estel
-          if ($autostart -ne ('"' + (Join-Path $installDir "estel.exe") + '"')) {
+          if ($autostart -ne ('"' + (Join-Path $installDir "estel.exe") + '" --startup')) {
             throw "O instalador não configurou o início automático"
           }
 
@@ -116,7 +151,7 @@ jobs:
             throw "A atualização terminou com o código $($update.ExitCode)"
           }
           $autostart = (Get-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run").Estel
-          if ($autostart -ne ('"' + (Join-Path $updatedDir "estel.exe") + '"')) {
+          if ($autostart -ne ('"' + (Join-Path $updatedDir "estel.exe") + '" --startup')) {
             throw "A atualização não corrigiu o caminho do início automático"
           }
 
