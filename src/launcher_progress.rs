@@ -63,6 +63,19 @@ impl Progress {
                 None,
             )?
         };
+        // Autorun can inherit SW_HIDE; a later manual request must still show feedback.
+        unsafe {
+            SetWindowPos(
+                window,
+                None,
+                0,
+                0,
+                0,
+                0,
+                SWP_SHOWWINDOW | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER,
+            )?
+        };
+        tracing::debug!(attempt, "aviso de inicialização exibido");
         Ok(())
     }
 

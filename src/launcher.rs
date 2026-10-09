@@ -120,8 +120,17 @@ pub fn run() -> anyhow::Result<()> {
                 last_error = Some(error);
             }
         }
+        crate::overlay::pump_messages();
+        if progress.cancelled() {
+            unsafe { SetEvent(raw(&quit))? };
+        }
+        if signaled(&quit, Duration::ZERO)? {
+            return Ok(());
+        }
         if attempt < MAX_RESTARTS {
             tracing::warn!(restart = attempt + 1, "reiniciando o Estel após falha");
+            progress.hide();
+            progress.show(attempt + 1)?;
             let retry = Instant::now() + Duration::from_secs(3 * u64::from(attempt + 1));
             while Instant::now() < retry {
                 crate::overlay::pump_messages();
@@ -141,7 +150,6 @@ pub fn run() -> anyhow::Result<()> {
                     retry.saturating_duration_since(Instant::now()),
                 )?;
             }
-            progress.hide();
         }
     }
     Err(last_error.unwrap_or_else(|| anyhow::anyhow!("o Estel não respondeu")))
