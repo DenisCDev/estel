@@ -20,7 +20,13 @@ pub mod hardware_wmi;
 #[cfg(windows)]
 pub mod hardware_worker;
 #[cfg(windows)]
+pub mod launcher;
+#[cfg(windows)]
+mod launcher_progress;
+#[cfg(windows)]
 pub mod location;
+#[cfg(windows)]
+pub mod logging;
 #[cfg(windows)]
 pub mod overlay;
 #[cfg(windows)]

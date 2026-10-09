@@ -46,7 +46,7 @@ Source: "..\target\release\estel.exe"; DestDir: "{app}"; Flags: ignoreversion
 Name: "{autoprograms}\Estel"; Filename: "{app}\estel.exe"; Parameters: "--settings"; WorkingDir: "{app}"
 
 [Registry]
-Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "Estel"; ValueData: """{app}\estel.exe"""; Flags: uninsdeletevalue; Check: EnableAutostart
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "Estel"; ValueData: """{app}\estel.exe"" --startup"; Flags: uninsdeletevalue; Check: EnableAutostart
 
 [Run]
 Filename: "{app}\estel.exe"; Parameters: "--settings"; Description: "Configurar e abrir Estel (localização, janela e câmera opcionais)"; Flags: nowait postinstall skipifsilent

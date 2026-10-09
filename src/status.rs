@@ -10,7 +10,6 @@ use windows::Win32::Foundation::{CloseHandle, WAIT_FAILED, WAIT_OBJECT_0};
 use windows::Win32::System::Threading::{
     EVENT_MODIFY_STATE, INFINITE, OpenEventW, SetEvent, WaitForMultipleObjects,
 };
-use windows::Win32::System::Threading::{OpenProcess, PROCESS_SYNCHRONIZE};
 use windows::core::w;
 
 use crate::config::Config;
@@ -146,16 +145,10 @@ impl UiUpdates {
         let worker_changed = changed.clone();
         let event = WakeSignal::named(w!("Local\\EstelStatusChanged"))?;
         let (error_tx, errors) = std::sync::mpsc::sync_channel(1);
-        let parent = std::env::var("ESTEL_UI_PARENT_PID")
-            .ok()
-            .and_then(|pid| pid.parse::<u32>().ok());
+        tracing::debug!("painel acompanhando as atualizações do Estel");
         std::thread::Builder::new().name("estel-status-ui".into()).spawn(move || {
-            let parent = parent.and_then(|pid| match unsafe { OpenProcess(PROCESS_SYNCHRONIZE, false, pid) } {
-                Ok(handle) => Some(handle),
-                Err(error) => { tracing::warn!(%error, "não foi possível acompanhar o processo principal"); None }
-            });
-            let mut handles = vec![worker_stop.handle(), event.handle()];
-            if let Some(parent) = parent { handles.push(parent); }
+            // A panel can stay open across host recovery and closing/reopening the desktop.
+            let handles = [worker_stop.handle(), event.handle()];
             loop {
                 let result = unsafe { WaitForMultipleObjects(&handles, false, INFINITE) };
                 if result == WAIT_OBJECT_0 { break; }
@@ -166,13 +159,8 @@ impl UiUpdates {
                     break;
                 }
                 worker_changed.store(true, Ordering::Release);
+                tracing::debug!("painel recebeu atualização de estado");
                 context.request_repaint();
-                if result.0 == WAIT_OBJECT_0.0 + 2 { break; }
-            }
-            if let Some(parent) = parent
-                && let Err(error) = unsafe { CloseHandle(parent) }
-            {
-                tracing::warn!(%error, "não foi possível liberar o acompanhamento do processo principal");
             }
         })?;
         Ok(Self {
