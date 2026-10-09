@@ -1,3 +1,4 @@
+#requires -Version 7.0
 [CmdletBinding()]
 param([Parameter(Mandatory)][string]$Executable)
 
@@ -21,6 +22,11 @@ function Find-Host {
     param([int]$LauncherId)
     ,@(Get-Process -Name estel,estel-portable-x86_64 -ErrorAction SilentlyContinue |
         Where-Object { $_.Path -eq $Executable -and $null -ne $_.Parent -and $_.Parent.Id -eq $LauncherId })
+}
+
+function Find-Panel {
+    ,@(Get-Process -Name estel,estel-portable-x86_64 -ErrorAction SilentlyContinue |
+        Where-Object { $_.Path -eq $Executable -and $_.MainWindowTitle -eq 'Estel' })
 }
 
 function Wait-Ready {
@@ -123,10 +129,10 @@ try {
         (Test-Path -LiteralPath $settingsLog) -and
             (Get-Content -LiteralPath $settingsLog -Raw) -match 'painel acompanhando as atualizações do Estel'
     } 'O painel não iniciou a escuta de atualizações.'
-    $panels = @(Get-Process -Name estel,estel-portable-x86_64 -ErrorAction SilentlyContinue |
-        Where-Object { $_.Path -eq $Executable -and $_.MainWindowTitle -eq 'Estel' })
-    if ($panels.Count -ne 1) { throw 'A abertura do painel criou janelas duplicadas.' }
+    Wait-Condition { (Find-Panel).Count -eq 1 } 'O painel não exibiu uma única janela.'
+    $panels = Find-Panel
     $panelId = $panels[0].Id
+    Write-Output 'PASS: inicialização, abertura duplicada e painel único visível.'
     $hostProcess = (Find-Host $launcher.Id)[0]
     Stop-Process -Id $hostProcess.Id
     Wait-Ready $launcher.Id 1
@@ -139,8 +145,7 @@ try {
     $reopenPanel = Start-Process -FilePath $Executable -ArgumentList '--settings' -WindowStyle Hidden -PassThru
     if (-not $reopenPanel.WaitForExit(10000) -or $reopenPanel.ExitCode -ne 0) { throw 'A reabertura do painel falhou.' }
     Wait-Condition {
-        $panels = @(Get-Process -Name estel,estel-portable-x86_64 -ErrorAction SilentlyContinue |
-            Where-Object { $_.Path -eq $Executable -and $_.MainWindowTitle -eq 'Estel' })
+        $panels = Find-Panel
         $panels.Count -eq 1 -and $panels[0].Id -eq $panelId
     } 'A recuperação duplicou ou substituiu o painel existente.'
     $quit = Start-Process -FilePath $Executable -ArgumentList '--quit' -WindowStyle Hidden -PassThru
@@ -148,6 +153,7 @@ try {
     if (-not $launcher.WaitForExit(35000) -or $launcher.ExitCode -ne 0) { throw 'O encerramento reiniciou ou não fechou o Estel.' }
     if ((Find-Host $launcher.Id).Count -ne 0) { throw 'O processo principal ficou aberto após encerrar.' }
     if ((Get-FileHash -LiteralPath (Join-Path $configDir 'config.toml')).Hash -ne $configHash) { throw 'A recuperação alterou as preferências.' }
+    Write-Output 'PASS: recuperação, painel atualizado, encerramento e preferências preservadas.'
 
     $launcher = Start-Process -FilePath $Executable -ArgumentList '--startup' -WindowStyle Hidden -PassThru
     $launchers.Add($launcher)
@@ -162,6 +168,7 @@ try {
     Wait-Condition { $null -eq (Get-Process -Id $panelId -ErrorAction SilentlyContinue) } 'O painel não fechou normalmente.'
     $quit = Start-Process -FilePath $Executable -ArgumentList '--quit' -WindowStyle Hidden -PassThru
     if (-not $quit.WaitForExit(10000) -or -not $launcher.WaitForExit(35000)) { throw 'A nova sessão não encerrou.' }
+    Write-Output 'PASS: painel atualizado entre sessões e fechamento normal.'
 
     Remove-Item -LiteralPath $launcherLog
     $launcher = Start-Process -FilePath $Executable -ArgumentList '--startup' -WindowStyle Hidden -PassThru
@@ -177,6 +184,7 @@ try {
     if ($launcher.ExitCode -eq 0) { throw 'O limite de recuperação foi comunicado como sucesso.' }
     $records = Get-Content -LiteralPath $launcherLog -Raw
     if (([regex]::Matches($records, 'processo principal iniciado')).Count -ne 4) { throw 'O limite de três reinícios não foi respeitado.' }
+    Write-Output 'PASS: limite de três reinícios e falha comunicada com código de saída.'
 
     $launcher = Start-Process -FilePath $Executable -ArgumentList '--startup' -WindowStyle Hidden -PassThru
     $launchers.Add($launcher)
